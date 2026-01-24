@@ -1,0 +1,26 @@
+{
+  "UI_RANGE2_A2_1768831678524": {
+    "symbol": "STBLUSDT",
+    "positionSide": "SHORT",
+    "stopPrice": "0.04874",
+    "entrySide": "SELL",
+    "tag": "UI_RANGE2_A2",
+    "ts": 1768831678713
+  },
+  "UI_RANGE2_A1_1768891214684": {
+    "symbol": "UAIUSDT",
+    "positionSide": "LONG",
+    "stopPrice": "0.177",
+    "entrySide": "BUY",
+    "tag": "UI_RANGE2_A1",
+    "ts": 1768891216995
+  },
+  "UI_RANGE2_A1_1768913640577": {
+    "symbol": "TAUSDT",
+    "positionSide": "LONG",
+    "stopPrice": "0.03581",
+    "entrySide": "BUY",
+    "tag": "UI_RANGE2_A1",
+    "ts": 1768913643033
+  }
+}

@@ -1,0 +1,72 @@
+# -*- coding: utf-8 -*-
+"""
+Sidebar UI for Streamlit Trading Control Panel.
+
+Goal (step-1 refactor):
+- Move ONLY the sidebar rendering + "init/reconnect" button logic out of streamlit_app.py
+- Keep behavior identical by dynamically resolving dependencies from the Streamlit main script
+  (i.e., the file you run via `streamlit run ...`).
+
+Next steps (recommended):
+- Replace dynamic dependency resolution with proper imports from services/ (exchange_service, user_stream_service).
+"""
+
+from __future__ import annotations
+
+from typing import Optional
+
+import streamlit as st
+
+from services.exchange_service import init_exchange_flow
+
+
+def _resolve_from_main(name: str):
+    """Resolve a symbol from the Streamlit main script module (__main__)."""
+    import sys
+
+    main = sys.modules.get("__main__")
+    if main is None or not hasattr(main, name):
+        raise RuntimeError(
+            f"sidebar.py expected `{name}` to exist in the Streamlit main script. "
+            f"Please keep `{name}` in streamlit_app.py for now, or pass a callback."
+        )
+    return getattr(main, name)
+
+
+def render_sidebar(
+    *,
+    cfg_path_default: str = "config.yaml",
+    dry_run_default: bool = False,
+) -> str:
+    """
+    Render the sidebar and return the selected page string (same as old code).
+
+    This function preserves the original behavior:
+    - config path input
+    - dry_run toggle
+    - page radio
+    - init/reconnect button that:
+        - loads config
+        - disconnects old exchange WS
+        - creates new exchange
+        - rebinds bots
+        - subscribes user-stream once and registers dispatcher targets
+
+    NOTE: For step-1 refactor, we keep all side effects here to avoid changing runtime behavior.
+    """
+    with st.sidebar:
+        st.header("连接设置")
+        cfg_path = st.text_input("config.yaml 路径", value=cfg_path_default)
+        override_dry_run = st.toggle("dry_run（模拟下单）", value=dry_run_default)
+
+        st.divider()
+        st.header("页面")
+        page = st.radio(
+            "选择功能页",
+            options=["🕯 锤子线扫描", "🧩 阶梯 + 手动下单", "🧾 日志", "📊 账户"],
+            index=0,
+            key="page_select",
+        )
+
+        if st.button("🔌 初始化 / 重新连接", key="init_exchange"):
+            init_exchange_flow(cfg_path, override_dry_run=override_dry_run)

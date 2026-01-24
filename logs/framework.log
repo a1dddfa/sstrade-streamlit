@@ -1,0 +1,37 @@
+2026-01-24 11:15:40,377 | INFO    | __main__ | ✅ Streamlit logging initialized, log_dir=D:\soft\sstrade-streamlit\logs
+2026-01-24 11:15:43,595 | INFO    | __main__ | ✅ Streamlit logging initialized, log_dir=D:\soft\sstrade-streamlit\logs
+2026-01-24 11:15:43,621 | INFO    | exchanges.base_exchange | BaseExchange初始化，global_config: {'log_level': 'INFO', 'testnet': False, 'proxy': 'http://127.0.0.1:7897', 'dry_run': False}, dry_run from global: False
+2026-01-24 11:15:43,622 | INFO    | exchanges.base_exchange | Config: {'api_key': '3vbuhIwKMLoJrakkfWZlAVMOAQiv6BfDUzdSpCBdd0LHPLMU5XEXR2PTkxA4YzP1', 'api_secret': 'Ws8WULtK2QQSZaXkskbgCXbOh0AYdKLWIcSljvot92NcjQAQwX5TmoFHIq5eqUyj', 'testnet': False, 'proxy': 'http://127.0.0.1:7897', 'rate_limit': 10}, dry_run from config: NOT FOUND
+2026-01-24 11:15:43,623 | INFO    | exchanges.base_exchange | 最终dry_run值: False
+2026-01-24 11:15:44,113 | INFO    | exchanges.binance_exchange | 成功初始化币安客户端: 主网
+2026-01-24 11:15:44,113 | INFO    | exchanges.binance_exchange | [PENDING_SL] loaded: 3 items from D:\soft\sstrade-streamlit\pending_stop_losses.json
+2026-01-24 11:15:44,114 | INFO    | exchanges.binance_exchange | 成功初始化币安WebSocket客户端: 主网
+2026-01-24 11:15:44,517 | ERROR   | exchanges.binance_exchange | [USER_STREAM] subscribe failed attempt=1/5: start_futures_user_socket returned empty conn_key
+Traceback (most recent call last):
+  File "D:\soft\sstrade-streamlit\exchanges\binance_exchange.py", line 343, in ws_subscribe_user_stream
+    raise RuntimeError("start_futures_user_socket returned empty conn_key")
+RuntimeError: start_futures_user_socket returned empty conn_key
+2026-01-24 11:15:46,524 | INFO    | exchanges.binance_exchange | 成功订阅用户数据流: conn_key=Ffe0D3DdqN0hjAjzDPCO81L6E0TR3Frlp1w9kxyK0LiEZMGbGmzFZGtDi96AqtnM
+2026-01-24 11:15:47,959 | INFO    | __main__ | ✅ Streamlit logging initialized, log_dir=D:\soft\sstrade-streamlit\logs
+2026-01-24 11:18:53,667 | INFO    | __main__ | ✅ Streamlit logging initialized, log_dir=D:\soft\sstrade-streamlit\logs
+2026-01-24 17:00:41,236 | INFO    | __main__ | ✅ Streamlit logging initialized, log_dir=D:\soft\sstrade-streamlit\logs
+2026-01-24 17:01:11,036 | INFO    | __main__ | ✅ Streamlit logging initialized, log_dir=D:\soft\sstrade-streamlit\logs
+2026-01-24 17:01:11,060 | INFO    | exchanges.base_exchange | BaseExchange初始化，global_config: {'log_level': 'INFO', 'testnet': False, 'proxy': 'http://127.0.0.1:7897', 'dry_run': False}, dry_run from global: False
+2026-01-24 17:01:11,061 | INFO    | exchanges.base_exchange | Config: {'api_key': '3vbuhIwKMLoJrakkfWZlAVMOAQiv6BfDUzdSpCBdd0LHPLMU5XEXR2PTkxA4YzP1', 'api_secret': 'Ws8WULtK2QQSZaXkskbgCXbOh0AYdKLWIcSljvot92NcjQAQwX5TmoFHIq5eqUyj', 'testnet': False, 'proxy': 'http://127.0.0.1:7897', 'rate_limit': 10}, dry_run from config: NOT FOUND
+2026-01-24 17:01:11,061 | INFO    | exchanges.base_exchange | 最终dry_run值: False
+2026-01-24 17:01:11,794 | INFO    | exchanges.binance_exchange | 成功初始化币安客户端: 主网
+2026-01-24 17:01:11,813 | INFO    | exchanges.binance_exchange | [PENDING_SL] loaded: 3 items from D:\soft\sstrade-streamlit\pending_stop_losses.json
+2026-01-24 17:01:11,815 | INFO    | exchanges.binance_exchange | 成功初始化币安WebSocket客户端: 主网
+2026-01-24 17:01:12,319 | ERROR   | exchanges.binance_exchange | [USER_STREAM] subscribe failed attempt=1/5: start_futures_user_socket returned empty conn_key
+Traceback (most recent call last):
+  File "D:\soft\sstrade-streamlit\exchanges\binance_exchange.py", line 358, in ws_subscribe_user_stream
+    raise RuntimeError("start_futures_user_socket returned empty conn_key")
+RuntimeError: start_futures_user_socket returned empty conn_key
+2026-01-24 17:01:13,470 | INFO    | __main__ | ✅ Streamlit logging initialized, log_dir=D:\soft\sstrade-streamlit\logs
+2026-01-24 17:01:13,495 | INFO    | exchanges.binance_exchange | 尝试获取行情信息: symbol=ETHUSDT, proxy=http://127.0.0.1:7897
+2026-01-24 17:01:14,103 | INFO    | exchanges.binance_exchange | 获取行情信息成功: {'symbol': 'ETHUSDT', 'priceChange': '34.11', 'priceChangePercent': '1.165', 'weightedAvgPrice': '2950.14', 'lastPrice': '2961.99', 'lastQty': '0.009', 'openPrice': '2927.88', 'highPrice': '3020.45', 'lowPrice': '2890.20', 'volume': '2883494.626', 'quoteVolume': '8506710903.55', 'openTime': 1769158860000, 'closeTime': 1769245269417, 'firstId': 7265030252, 'lastId': 7270544091, 'count': 5509790}
+2026-01-24 17:01:14,330 | INFO    | exchanges.binance_exchange | 成功订阅用户数据流: conn_key=SAePEBqFaKJN3aMRQwi8m3WyoQ6cAnlyNB5jU9DnWMZMCeYouCKuzcwpUgHeBrmP
+2026-01-24 17:01:34,374 | INFO    | __main__ | ✅ Streamlit logging initialized, log_dir=D:\soft\sstrade-streamlit\logs
+2026-01-24 17:01:36,274 | INFO    | __main__ | ✅ Streamlit logging initialized, log_dir=D:\soft\sstrade-streamlit\logs
+2026-01-24 17:01:36,310 | INFO    | exchanges.binance_exchange | 尝试获取行情信息: symbol=ETHUSDT, proxy=http://127.0.0.1:7897
+2026-01-24 17:01:36,452 | INFO    | exchanges.binance_exchange | 获取行情信息成功: {'symbol': 'ETHUSDT', 'priceChange': '34.12', 'priceChangePercent': '1.165', 'weightedAvgPrice': '2950.14', 'lastPrice': '2962.00', 'lastQty': '0.010', 'openPrice': '2927.88', 'highPrice': '3020.45', 'lowPrice': '2890.20', 'volume': '2883520.121', 'quoteVolume': '8506786419.59', 'openTime': 1769158860000, 'closeTime': 1769245294999, 'firstId': 7265030252, 'lastId': 7270544165, 'count': 5509864}

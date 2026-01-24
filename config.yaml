@@ -1,0 +1,134 @@
+# 量化交易框架配置
+
+# 全局设置
+global:
+  log_level: INFO
+  testnet: false
+  proxy: "http://127.0.0.1:7897"
+  dry_run: false
+
+# 交易所配置
+exchanges:
+  binance:
+    api_key: "3vbuhIwKMLoJrakkfWZlAVMOAQiv6BfDUzdSpCBdd0LHPLMU5XEXR2PTkxA4YzP1"
+    api_secret: "Ws8WULtK2QQSZaXkskbgCXbOh0AYdKLWIcSljvot92NcjQAQwX5TmoFHIq5eqUyj"
+    testnet: false
+    proxy: "http://127.0.0.1:7897"
+    rate_limit: 10
+
+# 策略配置
+strategies:
+  - name: "MartingaleGridStrategy"
+    class: "strategies.martingale_grid_strategy.MartingaleGridStrategy"
+    symbols: ["BTC/USDC"]
+    interval: "1m"
+    exchange: "binance"
+    active: false
+    config:
+      base_amount: 0.0025
+      grid_levels: 6
+      grid_spacing: 0.5
+      volume_multiplier: 2.0
+      max_drawdown: 5.0
+      tp_rate: 0.2
+      sl_rate: 10.0
+
+      # 网格距离参数
+      initial_grid_distance: 0.01
+      subsequent_grid_distance: 0.02
+      # 其他参数
+      stop_limit_spread: 0.001
+  
+  - name: "EthUSDCGridStrategy"
+    class: "strategies.ethusdc_strategy.EthUSDCGridStrategy"
+    symbols: ["ETH/USDC"]
+    interval: "1m"
+    exchange: "binance"
+    active: true
+    config:
+      base_amount: 0.05
+      grid_levels: 6
+      grid_spacing: 0.5
+      volume_multiplier: 2.0
+      max_drawdown: 5.0
+      tp_rate: 0.2
+      sl_rate: 10.0
+      
+      # 👇 新增的阶梯配置，从 A 一路到 F
+      ladder_config:
+        long:          # 多头方向：A1 → B1 → C1 → D1 → E1 → F1
+          B:
+            enabled: true          # 开启 B1
+            entry_offset: null    # B1 入场价 = price_1 * (1 - 0.003)
+            size_factor: null       # 数量 ≈ base_quantity * 2
+          C:
+            enabled: true
+            entry_offset: null
+            size_factor: null       # ≈ base * 4
+          D:
+            enabled: true
+            entry_offset: null
+            size_factor: null
+          E:
+            enabled: true         # 先关掉 E/F，需要时再打开
+            entry_offset: null
+            size_factor: null
+          F:
+            enabled: true
+            entry_offset: null
+            size_factor: null
+
+        short:         # 空头方向：A2 → B2 → C2 → D2 → E2 → F2
+          B:
+            enabled: true
+            entry_offset: null    # B2 入场价 = price_1 * (1 + 0.003)
+            size_factor: null
+          C:
+            enabled: true
+            entry_offset: null
+            size_factor: null
+          D:
+            enabled: true
+            entry_offset: null
+            size_factor: null
+          E:
+            enabled: true
+            entry_offset: null
+            size_factor: null
+          F:
+            enabled: true
+            entry_offset: null
+            size_factor: null
+
+      # 网格距离参数
+      initial_grid_distance: 0.01
+      subsequent_grid_distance: 0.02
+      # 其他参数
+      stop_limit_spread: 0.001
+
+# 风险控制配置
+risk_manager:
+  max_open_trades: 5
+  max_leverage: 50
+  max_position_size: 10000
+  max_daily_loss: 500
+  min_balance: 100
+
+# 数据配置
+data:
+  kline_limit: 200
+  refresh_interval: 5
+
+# 通知配置
+notification:
+  email:
+    enabled: false
+    smtp_server: "smtp.gmail.com"
+    smtp_port: 587
+    sender_email: "your_email@gmail.com"
+    sender_password: "your_password"
+    receiver_email: "receiver_email@gmail.com"
+  telegram:
+    enabled: false
+    token: "YOUR_TELEGRAM_TOKEN"
+    chat_id: "YOUR_CHAT_ID"
