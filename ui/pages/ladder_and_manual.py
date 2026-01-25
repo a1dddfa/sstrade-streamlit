@@ -188,6 +188,11 @@ def render() -> None:
     with rc4:
         r_off2 = st.number_input("A2 距离当前价 %（1=1%）", min_value=0.0, max_value=50.0, value=float(rbot.cfg.second_entry_offset_pct * 100.0), step=0.1, key="r2_off2")
         r_be = st.number_input("保本止损偏移 %（0.1=0.1%）", min_value=0.01, max_value=5.0, value=float(rbot.cfg.be_offset_pct * 100.0), step=0.01, key="r2_be")
+        r_enable_be = st.toggle(
+            "启用保本 BE 单（默认关闭）",
+            value=bool(getattr(rbot.cfg, "enable_be_order", False)),
+            key="r2_enable_be",
+        )
 
     r_tick = st.number_input("监控间隔(秒)", min_value=0.2, max_value=10.0, value=float(rbot.cfg.tick_interval_sec), step=0.2, key="r2_tick")
 
@@ -217,6 +222,7 @@ def render() -> None:
                 price_b=float(r_p2),
                 second_entry_offset_pct=float(r_off2) / 100.0,
                 be_offset_pct=float(r_be) / 100.0,
+                enable_be_order=bool(r_enable_be),
                 tick_interval_sec=float(r_tick),
             )
             rbot.configure(rcfg)

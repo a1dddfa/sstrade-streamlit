@@ -38,6 +38,7 @@ class RangeTwoConfig:
     price_b: float = 0.0
     second_entry_offset_pct: float = 0.01   # 1% => 0.01
     be_offset_pct: float = 0.001            # 0.1% => 0.001
+    enable_be_order: bool = False           # ✅ 是否启用“保本 BE 单”(STOP_LIMIT)，默认关闭
     tick_interval_sec: float = 1.0
     tag_prefix: str = "UI_RANGE2"
 
@@ -744,6 +745,25 @@ class RangeTwoBot(BotBase, TickerSubscriptionMixin):
             try:
                 with self._lock:
                     cfg = self.cfg
+
+                # ✅ 开关：默认不启用“保本 BE 单”
+                # 关闭时：如果之前挂过 BE 单，尝试撤掉并清空状态，然后本轮不再执行 BE 逻辑
+                if not bool(getattr(cfg, "enable_be_order", False)):
+                    oid_to_cancel = None
+                    sym_to_cancel = None
+                    with self._lock:
+                        oid_to_cancel = self.state.be_order_id
+                        sym_to_cancel = cfg.symbol
+                        self.state.be_order_id = None
+                        self.state.last_bep = None
+                    if oid_to_cancel:
+                        try:
+                            self.exchange.cancel_order(symbol=sym_to_cancel, order_id=oid_to_cancel)
+                            self.log.log(f"🧹 已撤销旧 BE 单（开关关闭）：order_id={oid_to_cancel}")
+                        except Exception as e:
+                            self.log.log(f"⚠️ 撤销旧 BE 单失败(忽略)：{e}")
+                    time.sleep(float(cfg.tick_interval_sec))
+                    continue
 
                 # ✅ 纯轮询行情
                 try:
