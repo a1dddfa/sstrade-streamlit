@@ -501,15 +501,7 @@ class RangeTwoBot(BotBase, TickerSubscriptionMixin):
                 total += abs(amt)
             return float(total)
 
-        # 0) WS 优先（更快更准）
-        try:
-            ws_pos = self.exchange._get_ws_positions(sym)  # UI 里也在用这个
-            qty = _sum_abs_amt(ws_pos)
-            if qty > 0:
-                self._last_qty_cache[cache_key] = qty
-                return qty
-        except Exception:
-            pass
+        # 项目只轮询：不使用 WS positions
 
         # 1) REST fallback（可能被降级节流/冷却期影响）
         try:
@@ -748,39 +740,20 @@ class RangeTwoBot(BotBase, TickerSubscriptionMixin):
         )
 
     def _run(self):
-        # ✅ 行情获取策略
-        # - 优先 WS（_px_q）
-        # - WS 断线/无推送时，低频 fallback REST（exchange.get_ticker）
-        last_rest_fetch_ts = 0.0
-        rest_min_interval = 10.0  # 秒：REST fallback 最小间隔（建议 2~5s）
-
         while not self._stop.is_set():
             try:
                 with self._lock:
                     cfg = self.cfg
 
-                self._ensure_ticker_ws(cfg.symbol)
-
+                # ✅ 纯轮询行情
                 try:
-                    mark = self._px_q.get(timeout=2.0)
-                except queue.Empty:
-                    # WS 断流/重连时：回落 REST（限频），保证 BE/锁盈逻辑不会“永远等不到行情”
-                    now = time.time()
-                    if (now - float(self._last_rest_ts)) < rest_min_interval:
-                        continue
-                    self._last_rest_ts = now
-                    try:
-                        t = self.exchange.get_ticker(cfg.symbol) or {}
-                        mark = float(t.get("lastPrice") or t.get("markPrice") or 0.0)
-                    except Exception:
-                        continue
-                    if mark <= 0:
-                        continue
-
-
+                    t = self.exchange.get_ticker(cfg.symbol) or {}
+                    mark = float(t.get("lastPrice") or t.get("markPrice") or 0.0)
+                except Exception:
+                    time.sleep(float(cfg.tick_interval_sec))
+                    continue
                 if mark <= 0:
                     continue
-
                 self.state.last_price = mark
 
                 lo = float(self.state.low or 0.0)

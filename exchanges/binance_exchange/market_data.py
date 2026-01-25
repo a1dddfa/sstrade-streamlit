@@ -12,9 +12,13 @@ from .deps import (
 
 
 class MarketDataMixin:
-    def get_ticker(self, symbol: str) -> Dict:
+    def __init__(self, *args, **kwargs):
+        self._last_ticker_fetch_ts: dict[str, float] = {}
+        self._last_ticker_cache: dict[str, dict] = {}
+
+    def fetch_ticker(self, symbol: str):
         """
-        获取行情信息
+        从REST API获取行情信息
         
         Args:
             symbol: 交易对
@@ -24,26 +28,15 @@ class MarketDataMixin:
         """
         symbol_fmt = self._format_symbol(symbol)
 
-        # ⭐ 0. 优先使用 WebSocket/缓存行情（只要足够新鲜，就不打 REST）
-        cached = self._last_ticker.get(symbol_fmt)
-        cached_ts = self._last_ticker_ts.get(symbol_fmt, 0.0)
-        if cached is not None:
-            try:
-                price = float(cached.get('lastPrice', 0.0) or 0.0)
-            except Exception:
-                price = 0.0
-            if price > 0 and (time.time() - cached_ts) <= self._ws_ticker_max_age:
-                return cached
-
         # ⭐ 1. 如果当前处于限流冷却期，优先返回缓存的真实行情
         if self._is_in_rate_limit_cooldown():
             cached = self._last_ticker.get(symbol_fmt)
             if cached is not None:
-                logger.warning(f"[RATE LIMIT] 冷却期内 get_ticker({symbol_fmt}) 使用缓存行情数据")
+                logger.warning(f"[RATE LIMIT] 冷却期内 fetch_ticker({symbol_fmt}) 使用缓存行情数据")
                 return cached
 
             logger.error(
-                   f"[RATE LIMIT] 冷却期内 get_ticker({symbol_fmt}) 无缓存，且不能返回模拟价，"
+                   f"[RATE LIMIT] 冷却期内 fetch_ticker({symbol_fmt}) 无缓存，且不能返回模拟价，"
                    f"上层应跳过交易逻辑"
             )
             raise RuntimeError(f"限流冷却期且无缓存：无法获取 {symbol_fmt} 行情")
@@ -89,7 +82,7 @@ class MarketDataMixin:
 
         except Exception as e:
             # ⭐ 出错：先交给限流逻辑处理 -1003
-            self._handle_rate_limit_error(e, context="get_ticker")
+            self._handle_rate_limit_error(e, context="fetch_ticker")
 
             logger.error(f"获取行情信息失败: {e}")
             logger.error(f"错误类型: {type(e).__name__}")
@@ -99,12 +92,30 @@ class MarketDataMixin:
             # ⭐ 优先返回缓存的真实数据
             cached = self._last_ticker.get(symbol_fmt)
             if cached is not None:
-                logger.warning(f"获取行情失败，get_ticker({symbol_fmt}) 返回缓存行情数据")
+                logger.warning(f"获取行情失败，fetch_ticker({symbol_fmt}) 返回缓存行情数据")
                 return cached
 
             # ✅ 改成：要么抛异常，要么返回明显的“无效价格”
-            logger.error(f"获取行情失败且无缓存，get_ticker({symbol_fmt}) 无法返回有效行情")
+            logger.error(f"获取行情失败且无缓存，fetch_ticker({symbol_fmt}) 无法返回有效行情")
             raise RuntimeError(f"无法获取 {symbol_fmt} 的真实行情")
+
+    def get_ticker(self, symbol: str):
+        sym = str(symbol).replace("/", "").upper()
+
+        # 纯轮询：做一个最小间隔缓存，避免 1 秒内重复打 REST
+        now = time.time()
+        min_interval = float(getattr(self, "_rest_ticker_min_interval", 0.8))
+        last_ts = float(self._last_ticker_fetch_ts.get(sym, 0.0))
+        if (now - last_ts) < min_interval:
+            cached = self._last_ticker_cache.get(sym)
+            if cached:
+                return cached
+
+        t = self.fetch_ticker(symbol)  # 走 REST
+        if isinstance(t, dict) and t:
+            self._last_ticker_cache[sym] = t
+            self._last_ticker_fetch_ts[sym] = now
+        return t
 
     def get_order_book(self, symbol: str, limit: int = 10) -> Dict:
         """

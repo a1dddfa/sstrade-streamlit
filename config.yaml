@@ -6,12 +6,13 @@ global:
   testnet: false
   proxy: "http://127.0.0.1:7897"
   dry_run: false
+  use_ws: false
 
 # 交易所配置
 exchanges:
   binance:
-    api_key: "3vbuhIwKMLoJrakkfWZlAVMOAQiv6BfDUzdSpCBdd0LHPLMU5XEXR2PTkxA4YzP1"
-    api_secret: "Ws8WULtK2QQSZaXkskbgCXbOh0AYdKLWIcSljvot92NcjQAQwX5TmoFHIq5eqUyj"
+    api_key: "05gSSkms0fP3VBUhKqzqSkE28yxE9JPlQFJtSZaIUIqNtnrHwcFWCgYzkMdcNlep"
+    api_secret: "2bdsfXoTJkE51ptECX8DYtjrAFvHrg9ZcAuWmnhlupmzEP14eYOgM3mKRIs7XEEt"
     testnet: false
     proxy: "http://127.0.0.1:7897"
     rate_limit: 10

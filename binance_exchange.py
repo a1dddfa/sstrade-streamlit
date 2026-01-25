@@ -31,6 +31,9 @@ class BinanceExchange(BaseExchange):
         # 保存全局配置（父类已经处理了dry_run）
         self.global_config = global_config or {}
 
+        # 全局开关：项目只使用轮询（默认 False）
+        self.use_ws = bool((global_config or {}).get("use_ws", False))
+
         # ⭐ 限流相关状态：连续 -1003 次数 & 冷却结束时间戳
         self.consecutive_1003 = 0       # 最近连续出现多少次 -1003
         self.rate_limited_until = 0.0   # 若 > time.time()，说明正处于冷却期
@@ -130,6 +133,9 @@ class BinanceExchange(BaseExchange):
         连接WebSocket
         """
         try:
+            if not getattr(self, "use_ws", False):
+                # 项目只用轮询：禁止任何 WS 连接建立
+                return
             if self.dry_run:
                 logger.info("dry_run模式下不连接WebSocket")
                 return True
@@ -154,6 +160,8 @@ class BinanceExchange(BaseExchange):
         断开WebSocket连接
         """
         try:
+            if not getattr(self, "use_ws", False):
+                return
             if self.dry_run:
                 logger.info("dry_run模式下不操作WebSocket")
                 return True
@@ -182,6 +190,9 @@ class BinanceExchange(BaseExchange):
             callback: 回调函数
         """
         try:
+            if not getattr(self, "use_ws", False):
+                # no-op unsubscribe
+                return lambda: None
             if self.dry_run:
                 logger.info(f"dry_run模式下模拟订阅行情: {symbol}")
                 return True
@@ -230,6 +241,8 @@ class BinanceExchange(BaseExchange):
             callback: 当有订单更新时回调函数，参数是统一格式的订单字典
         """
         try:
+            if not getattr(self, "use_ws", False):
+                return lambda: None
             if self.dry_run:
                 logger.info("dry_run模式下不订阅用户数据流，直接返回")
                 self.user_stream_callback = callback
@@ -264,6 +277,8 @@ class BinanceExchange(BaseExchange):
         取消订阅用户数据流
         """
         try:
+            if not getattr(self, "use_ws", False):
+                return
             if self.dry_run:
                 logger.info("dry_run模式下不取消用户数据流")
                 return True
@@ -398,6 +413,8 @@ class BinanceExchange(BaseExchange):
             symbol: 交易对
         """
         try:
+            if not getattr(self, "use_ws", False):
+                return
             if self.dry_run:
                 logger.info(f"dry_run模式下模拟取消订阅行情: {symbol}")
                 return True
@@ -491,6 +508,8 @@ class BinanceExchange(BaseExchange):
             return self._ws_balances.get(currency)
 
     def _get_ws_positions(self, symbol: Optional[str] = None) -> List[Dict]:
+        if not getattr(self, "use_ws", False):
+            return []
         with self._ws_lock:
             if symbol:
                 sym = self._format_symbol(symbol)
@@ -499,6 +518,8 @@ class BinanceExchange(BaseExchange):
             return list(self._ws_positions.values())
 
     def _get_ws_open_orders(self, symbol: Optional[str] = None) -> List[Dict]:
+        if not getattr(self, "use_ws", False):
+            return []
         with self._ws_lock:
             if not symbol:
                 out = []

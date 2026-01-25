@@ -62,6 +62,9 @@ class TickerSubscriptionMixin:
         - symbol 不变：不重复订阅
         - subscribe 出错：记录日志，但不让 bot 直接崩（交给上层 fallback REST）
         """
+        if not getattr(exchange, "use_ws", False):
+            # 项目只轮询：不做任何订阅
+            return
         if not hasattr(self, "_ticker_symbol"):
             self._ticker_symbol = None
         if not hasattr(self, "_ticker_cb"):
