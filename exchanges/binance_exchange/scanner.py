@@ -253,6 +253,7 @@ class ScannerMixin:
             logger.error(f"获取可交易合约列表失败: {e}", exc_info=True)
             return []
 
+    @staticmethod
     def _is_hammer_or_inverted(c: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """按你最新定义识别锤子线/倒锤子线（不筛趋势、不要求实体贴边）。
 
