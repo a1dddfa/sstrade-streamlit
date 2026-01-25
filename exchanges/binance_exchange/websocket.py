@@ -20,6 +20,10 @@ class WebsocketMixin:
             if self.dry_run:
                 logger.info("dry_run模式下不连接WebSocket")
                 return True
+            
+            if not self.use_ws:
+                logger.info("use_ws=False，跳过 WebSocket 连接")
+                return True
                 
             if not self._ws_initialized:
                 self._init_ws_client()
@@ -43,6 +47,10 @@ class WebsocketMixin:
         try:
             if self.dry_run:
                 logger.info("dry_run模式下不操作WebSocket")
+                return True
+            
+            if not self.use_ws:
+                logger.info("use_ws=False，跳过 WebSocket 断开连接")
                 return True
                 
             if self.ws_manager:
@@ -71,6 +79,10 @@ class WebsocketMixin:
         try:
             if self.dry_run:
                 logger.info(f"dry_run模式下模拟订阅行情: {symbol}")
+                return True
+            
+            if not self.use_ws:
+                logger.info(f"use_ws=False，跳过行情订阅: {symbol}")
                 return True
                 
             if not self._ws_initialized:
@@ -130,6 +142,10 @@ class WebsocketMixin:
         try:
             if self.dry_run:
                 logger.info(f"dry_run模式下模拟取消订阅行情: {symbol}")
+                return True
+            
+            if not self.use_ws:
+                logger.info(f"use_ws=False，跳过行情取消订阅: {symbol}")
                 return True
 
             if not self.ws_manager:
@@ -277,12 +293,19 @@ class WebsocketMixin:
                 logger.info("dry_run模式下不订阅用户数据流，直接返回")
                 self.user_stream_callback = callback
                 return True
+            
+            if not getattr(self, "use_ws", False):
+                logger.info(
+                    "[USER_STREAM] use_ws=False，跳过用户数据流订阅（使用 REST 轮询）"
+                )
+                self.user_stream_callback = callback
+                return True
 
             if not self._ws_initialized:
                 self._init_ws_client()
 
-            if not self.ws_manager:
-                logger.error("WebSocket管理器未初始化，无法订阅用户数据流")
+            if self.ws_manager is None:
+                logger.warning("[USER_STREAM] ws_manager is None，跳过订阅")
                 self._user_stream_fail_count += 1
                 self._enter_account_rest_degraded_mode(reason="ws_manager_not_ready", hold_sec=degraded_hold_sec)
                 return False
@@ -343,6 +366,10 @@ class WebsocketMixin:
         try:
             if self.dry_run:
                 logger.info("dry_run模式下不取消用户数据流")
+                return True
+            
+            if not self.use_ws:
+                logger.info("use_ws=False，跳过用户数据流取消订阅")
                 return True
 
             if self.ws_manager and self.user_stream_conn_key:

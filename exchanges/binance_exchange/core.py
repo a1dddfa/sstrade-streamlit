@@ -25,6 +25,8 @@ class CoreBinanceExchange(BaseExchange):
         super().__init__(config, global_config)
         # 保存全局配置（父类已经处理了dry_run）
         self.global_config = global_config or {}
+        # WebSocket 启用配置
+        self.use_ws = self.global_config.get("use_ws", False)
 
         # ⭐ 限流相关状态：连续 -1003 次数 & 冷却结束时间戳
         self.consecutive_1003 = 0       # 最近连续出现多少次 -1003
@@ -180,6 +182,10 @@ class CoreBinanceExchange(BaseExchange):
         try:
             if self.dry_run:
                 logger.info("dry_run模式下不初始化WebSocket客户端")
+                return
+            
+            if not self.use_ws:
+                logger.info("use_ws=False，跳过 Binance WebSocket 初始化")
                 return
                 
             # 初始化WebSocket管理器
