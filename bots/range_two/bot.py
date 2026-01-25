@@ -185,7 +185,9 @@ class RangeTwoBot(BotBase, TickerSubscriptionMixin):
             return on_ticker
 
         # ✅ 只使用 mixin 的订阅管理：避免重复订阅，并确保 stop() 时能精确退订
-        super()._ensure_ticker_ws(self.exchange, symbol, factory, on_log=self.log.log)
+        # 注意：RangeTwoBot 的 MRO 是 RangeTwoBot -> BotBase -> TickerSubscriptionMixin
+        # super() 会先到 BotBase（它没有 _ensure_ticker_ws），所以这里必须显式调用 mixin。
+        TickerSubscriptionMixin._ensure_ticker_ws(self, self.exchange, symbol, factory, on_log=self.log.log)
 
     def _place_limit_with_fixed_tp_sl(
         self,
