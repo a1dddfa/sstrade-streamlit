@@ -25,6 +25,7 @@ from typing import Any, Dict, Optional
 
 import logging
 import streamlit as st
+import time
 import yaml
 
 from infra.logging.ui_logger import UILogger
@@ -164,6 +165,22 @@ def main() -> None:
         render_account_page()
     else:
         st.info("未知页面")
+
+    # ==============================
+    # Positions global poller
+    # ==============================
+    exchange = st.session_state.get("exchange")
+    if exchange is not None:
+        now = time.time()
+        last_poll = st.session_state.get("positions_last_poll_ts", 0)
+
+        # 每 15 秒最多刷新一次全量持仓
+        if now - last_poll > 15:
+            try:
+                exchange.get_positions(None)  # ✅ 全项目唯一的全量调用点
+                st.session_state["positions_last_poll_ts"] = now
+            except Exception as e:
+                logger.warning(f"positions poller failed: {e}")
 
 
 if __name__ == "__main__":

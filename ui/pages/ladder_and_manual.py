@@ -507,10 +507,11 @@ def render() -> None:
             # 1) 拉取持仓
             positions: List[Dict[str, Any]] = []
             try:
-                # symbol 为空则获取全量持仓（BinanceExchange.get_positions 支持）
-                positions = exchange.get_positions(selected_symbol or None)
+                # ⚠️ UI 禁止主动打全量仓位 
+                all_pos = exchange._last_positions.get("__ALL__", [])
             except Exception as e:
-                st.warning(f"拉取持仓失败：{e}")
+                st.warning(f"获取仓位失败：{e}")
+                all_pos = []
 
             # 2) 拉取未成交订单
             open_orders: List[Dict[str, Any]] = []
@@ -523,7 +524,7 @@ def render() -> None:
                 st.warning(f"拉取未成交订单失败：{e}")
 
             st.session_state["__poll_ts__"] = time.time()
-            st.session_state["__positions_cache__"] = positions
+            st.session_state["__positions_cache__"] = all_pos
             st.session_state["__open_orders_cache__"] = open_orders
 
             # 渲染
@@ -532,7 +533,7 @@ def render() -> None:
                 st.markdown("#### 持仓")
                 # 只显示非零仓位
                 filtered_positions = []
-                for p in positions:
+                for p in all_pos:
                     if not isinstance(p, dict):
                         continue
                     try:
