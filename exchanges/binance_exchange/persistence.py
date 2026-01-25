@@ -87,6 +87,24 @@ class PersistenceMixin:
             "orderRequest": dict(order_request or {}),
             "tag": str(tag),
             "createdTs": int(time.time() * 1000),
+
+            # =========================
+            # UI 可观测状态字段（本地触发单）
+            # =========================
+            # 是否触发
+            "triggerStatus": "PENDING",        # PENDING | TRIGGERED
+            # 触发后执行结果
+            "triggerResult": "PENDING",        # PENDING | SUCCESS | FAILED
+            "triggerError": None,
+            "triggeredTs": None,
+
+            # 真实订单提交状态
+            "orderStatus": "NONE",             # NONE | SUBMITTING | SUBMITTED | FAILED
+            "orderError": None,
+            "orderResult": None,
+            "orderId": None,
+            "clientOrderId": None,
+            "submittedTs": None,
         }
         with self._ws_lock:
             self._pending_local_trigger_orders[oid] = cfg
@@ -97,9 +115,15 @@ class PersistenceMixin:
         """轮询触发：满足 activatePrice 条件后，提交真实订单到交易所。"""
         if not symbol_fmt or last_price <= 0:
             return
+        
+        # 1️⃣ 只处理“还没触发、也没成功下单”的订单
         with self._ws_lock:
-            items = [(k, v) for k, v in (self._pending_local_trigger_orders or {}).items()
-                     if v.get("symbol") == symbol_fmt]
+            items = [
+                (k, v) for k, v in (self._pending_local_trigger_orders or {}).items()
+                if v.get("symbol") == symbol_fmt
+                and v.get("triggerStatus", "PENDING") == "PENDING"
+                and v.get("orderStatus", "NONE") in ("NONE", "FAILED")
+            ]
         if not items:
             return
 
@@ -111,21 +135,62 @@ class PersistenceMixin:
                 triggered.append((k, cfg))
 
         for k, cfg in triggered:
-            req = dict(cfg.get("orderRequest") or {})
-            p = dict(req.get("params") or {})
-            p["_skip_local_trigger"] = True
-            req["params"] = p
-            self.create_order(
-                symbol=req.get("symbol") or symbol_fmt,
-                side=req["side"],
-                order_type=req["order_type"],
-                quantity=float(req.get("quantity") or 0.0),
-                price=req.get("price"),
-                params=req.get("params"),
-            )
-            with self._ws_lock:
-                self._pending_local_trigger_orders.pop(k, None)
-            self._save_pending_local_trigger_orders()
+            now_ms = int(time.time() * 1000)
+            try:
+                # 2️⃣ 命中触发价 → 先落库 TRIGGERED 状态（防重入）
+                with self._ws_lock:
+                    cur = self._pending_local_trigger_orders.get(k)
+                    if not cur:
+                        continue
+                    cur["triggerStatus"] = "TRIGGERED"
+                    cur["triggerResult"] = "PENDING"
+                    cur["triggeredTs"] = now_ms
+                    cur["orderStatus"] = "SUBMITTING"
+                    cur["submittedTs"] = now_ms
+                    self._pending_local_trigger_orders[k] = cur
+                self._save_pending_local_trigger_orders()
+
+                req = dict(cfg.get("orderRequest") or {})
+                p = dict(req.get("params") or {})
+                p["_skip_local_trigger"] = True
+                req["params"] = p
+                
+                # 提交真实订单
+                o = self.create_order(
+                    symbol=req.get("symbol") or symbol_fmt,
+                    side=req["side"],
+                    order_type=req["order_type"],
+                    quantity=float(req.get("quantity") or 0.0),
+                    price=req.get("price"),
+                    params=req.get("params"),
+                )
+
+                # 3️⃣ create_order 成功 → 写入真实订单回执
+                with self._ws_lock:
+                    cur = self._pending_local_trigger_orders.get(k)
+                    if not cur:
+                        continue
+                    cur["triggerResult"] = "SUCCESS"
+                    cur["orderStatus"] = "SUBMITTED"
+                    cur["orderResult"] = o
+                    cur["orderId"] = o.get("orderId")
+                    cur["clientOrderId"] = o.get("clientOrderId")
+                    self._pending_local_trigger_orders[k] = cur
+                self._save_pending_local_trigger_orders()
+                
+            except Exception as e:
+                # 4️⃣ create_order 失败 → 状态可见，不吞单
+                logger.warning(f"[LOCAL_TRIGGER] trigger failed: {e}", exc_info=True)
+                with self._ws_lock:
+                    cur = self._pending_local_trigger_orders.get(k)
+                    if not cur:
+                        continue
+                    cur["triggerResult"] = "FAILED"
+                    cur["triggerError"] = repr(e)
+                    cur["orderStatus"] = "FAILED"
+                    cur["orderError"] = repr(e)
+                    self._pending_local_trigger_orders[k] = cur
+                self._save_pending_local_trigger_orders()
 
     def poll_local_triggers_once(self) -> None:
         """给轮询线程用：ticker 拉取 + 本地触发"""

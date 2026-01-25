@@ -591,5 +591,39 @@ def render() -> None:
         _poll_positions_and_orders()
 
     st.divider()
+
+    # -----------------------------    
+    # Local trigger order status
+    # -----------------------------    
+    st.markdown("### 🧷 本地触发挂单状态（local-trigger）")
+    st.caption("用于观察：是否触发、触发后提交是否成功、以及提交回执")
+
+    try:
+        ltr = exchange.get_pending_local_trigger_orders() or []
+        rows = []
+        for r in ltr:
+            rows.append({
+                "id": r.get("id"),
+                "symbol": r.get("symbol"),
+                "activatePrice": r.get("activatePrice"),
+                "activateCondition": r.get("activateCondition"),
+                "tag": r.get("tag"),
+
+                "triggerStatus": r.get("triggerStatus"),
+                "triggerResult": r.get("triggerResult"),
+                "triggerError": r.get("triggerError"),
+                "triggeredTs": r.get("triggeredTs"),
+
+                "orderStatus": r.get("orderStatus"),
+                "orderId": r.get("orderId"),
+                "clientOrderId": r.get("clientOrderId"),
+                "orderError": r.get("orderError"),
+                "submittedTs": r.get("submittedTs"),
+            })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, height=300)
+    except Exception as e:
+        st.warning(f"获取本地触发订单状态失败：{e}")
+
+    st.divider()
     st.markdown("### 🧷 阶梯运行状态")
     st.json(asdict(bot.state), expanded=True)
