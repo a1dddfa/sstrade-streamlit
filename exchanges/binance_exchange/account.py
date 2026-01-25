@@ -12,6 +12,14 @@ from .deps import (
 
 
 class AccountMixin:
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # ✅ 最近一次成功获取的“全量持仓”
+        self._last_positions_all_ok = None
+
+        self._last_positions = {}
+        self._last_positions_ts = {}
+
     def get_balance(self, currency: str = "USDT") -> Dict:
         """
         获取账户余额（优先使用 User Data Stream 缓存，必要时才走 REST）。
@@ -96,9 +104,30 @@ class AccountMixin:
         # key: 用于缓存的索引；symbol=None 时用 "__ALL__"
         cache_key = "__ALL__"
         symbol_fmt: Optional[str] = None
+        now = time.time()
+
         if symbol:
             symbol_fmt = self._format_symbol(symbol)
             cache_key = symbol_fmt
+
+        # ✅ TTL 缓存：避免 UI/策略反复打 positionRisk
+        ttl = float(
+            (getattr(self, "global_config", {}) or {}).get("positions_cache_ttl_sec", 10)
+        )
+
+        # 1) symbol 查询：优先从 __ALL__ 缓存过滤
+        if symbol_fmt:
+            all_cached = self._last_positions.get("__ALL__")
+            all_ts = self._last_positions_ts.get("__ALL__", 0)
+            if all_cached and (now - all_ts) <= ttl:
+                return [p for p in all_cached if p.get("symbol") == symbol_fmt]
+
+        # 2) 全量查询：缓存足够新鲜直接返回
+        if cache_key == "__ALL__":
+            cached = self._last_positions.get("__ALL__")
+            ts = self._last_positions_ts.get("__ALL__", 0)
+            if cached and (now - ts) <= ttl:
+                return cached
 
         # ⭐ 0. WS 已就绪：优先从 WS positions 缓存读取（避免 REST 轮询）
         if not self.dry_run and getattr(self, "_ws_account_ready", False):
@@ -108,7 +137,10 @@ class AccountMixin:
             else:
                 result = list(self._ws_positions.values())
 
+            # ✅ 缓存全量持仓（用于节流时兜底）
+            self._last_positions_all_ok = list(self._ws_positions.values())
             self._last_positions[cache_key] = result
+            self._last_positions_ts[cache_key] = time.time()
             return result
 
         # ⭐ 1. 冷却期内优先返回缓存的真实持仓
@@ -147,7 +179,20 @@ class AccountMixin:
             if cached is not None:
                 logger.warning(f"[DEGRADED] get_positions({cache_key}) throttled, return cached")
                 return cached
-            logger.warning(f"[DEGRADED] get_positions({cache_key}) throttled, no cache -> return []")
+            # ✅ 关键修复：节流时绝不返回 []（会把 UI 清空）
+            last_ok = getattr(self, "_last_positions_all_ok", None)
+            if last_ok:
+                logger.warning(
+                    f"[DEGRADED] get_positions({cache_key}) throttled, no cache -> return last_ok_all"
+                )
+                if symbol:
+                    symbol_fmt = self._format_symbol(symbol)
+                    return [p for p in last_ok if p.get("symbol") == symbol_fmt]
+                return last_ok
+
+            logger.warning(
+                f"[DEGRADED] get_positions({cache_key}) throttled, no cache/last_ok -> return []"
+            )
             return []
 
         try:
@@ -182,6 +227,11 @@ class AccountMixin:
             # ⭐ 调用成功：重置连续 -1003 计数
             self.consecutive_1003 = 0
 
+            # ✅ 缓存全量持仓（用于节流时兜底）
+            self._last_positions_all_ok = positions_all
+            self._last_positions["__ALL__"] = positions_all
+            self._last_positions_ts["__ALL__"] = now
+
             # 根据 symbol 过滤
             if symbol_fmt:
                 positions = [p for p in positions_all if p.get('symbol') == symbol_fmt]
@@ -190,6 +240,7 @@ class AccountMixin:
 
             # ⭐ 更新缓存
             self._last_positions[cache_key] = positions
+            self._last_positions_ts[cache_key] = time.time()
 
             return positions
 

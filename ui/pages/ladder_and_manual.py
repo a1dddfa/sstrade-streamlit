@@ -259,13 +259,37 @@ def render() -> None:
     with o2:
         order_side = st.selectbox("方向（手动下单）", options=["long", "short"], index=0)
     with o3:
-        order_type = st.selectbox("订单类型", options=["market", "limit"], index=0)
+        order_type = st.selectbox(
+            "订单类型",
+            options=[
+                "market",
+                "limit",
+                "stop_limit",
+                "stop_market",
+                "take_profit",
+                "take_profit_limit",
+                "stop_loss_limit",
+            ],
+            index=0
+        )
     with o4:
         qty = st.number_input("数量", min_value=0.0001, value=0.001, step=0.001, format="%.6f")
 
     price = None
+    stop_price = None
+
     if order_type == "limit":
-        price = st.number_input("限价价格", min_value=0.0, value=0.0, step=0.01, format="%.6f")
+        price = st.number_input("限价价格(price)", min_value=0.0, value=0.0, step=0.01, format="%.6f")
+
+    if order_type in ("stop_limit", "stop_loss_limit", "take_profit_limit"):
+        c1, c2 = st.columns(2)
+        with c1:
+            stop_price = st.number_input("触发价(stopPrice)", min_value=0.0, value=0.0, step=0.01, format="%.6f")
+        with c2:
+            price = st.number_input("触发后挂单限价(price)", min_value=0.0, value=0.0, step=0.01, format="%.6f")
+
+    if order_type in ("stop_market", "take_profit"):
+        stop_price = st.number_input("触发价(stopPrice)", min_value=0.0, value=0.0, step=0.01, format="%.6f")
 
     # mark price (hint only)
     mark = None
@@ -341,12 +365,29 @@ def render() -> None:
                         if not use_deferred_stoplimit:
                             params["stop_loss"] = {"price": float(sl_price)}
 
+                # 条件单/保护单：需要 stopPrice
+                if order_type in ("stop_limit", "stop_loss_limit", "take_profit_limit", "stop_market", "take_profit"):
+                    if stop_price is None or float(stop_price) <= 0:
+                        raise ValueError("该订单类型必须填写触发价 stopPrice (>0)")
+                    params["stopPrice"] = float(stop_price)
+
+                submit_price = None
+                if order_type == "limit":
+                    submit_price = float(price) if (price and float(price) > 0) else None
+                elif order_type in ("stop_limit", "stop_loss_limit", "take_profit_limit"):
+                    if price is None or float(price) <= 0:
+                        raise ValueError("该订单类型必须填写触发后挂单限价 price (>0)")
+                    submit_price = float(price)
+                elif order_type == "take_profit":
+                    # 你项目里 TP 常用 price=stopPrice 的实现习惯，这里保持一致
+                    submit_price = float(stop_price)
+
                 o = exchange.create_order(
                     symbol=sym2.strip().upper().replace("/", ""),
                     side=order_side,
                     order_type=order_type,
                     quantity=float(qty),
-                    price=float(price) if (order_type == "limit" and price and price > 0) else None,
+                    price=submit_price,
                     params=params,
                 )
 
@@ -398,15 +439,20 @@ def render() -> None:
     st.markdown("### 📌 当前仓位（Hedge：LONG + SHORT）")
 
     try:
-        pos = exchange._get_ws_positions(sym2.strip().upper().replace("/", "")) or []
+        sym_fmt = sym2.strip().upper().replace("/", "")
+        pos = exchange.get_positions(sym_fmt) or []
         rows = []
-        for p in pos if isinstance(pos, list) else [pos]:
+        for p in pos:
             if not isinstance(p, dict):
                 continue
-            if str(p.get("symbol", "")).replace("/", "") != str(sym2).replace("/", ""):
-                continue
+            # 只显示非零仓位
+            try:
+                if abs(float(p.get("positionAmt") or 0)) <= 0:
+                    continue
+            except Exception:
+                pass
             rows.append({
-                "交易对": p.get("symbol"),
+                "交易对": p.get("symbol") or sym_fmt,
                 "方向(positionSide)": p.get("positionSide"),
                 "数量(positionAmt)": p.get("positionAmt"),
                 "开仓均价(entryPrice)": p.get("entryPrice"),
@@ -484,10 +530,22 @@ def render() -> None:
             cols = st.columns(2)
             with cols[0]:
                 st.markdown("#### 持仓")
-                if not positions:
+                # 只显示非零仓位
+                filtered_positions = []
+                for p in positions:
+                    if not isinstance(p, dict):
+                        continue
+                    try:
+                        if abs(float(p.get("positionAmt") or 0)) <= 0:
+                            continue
+                    except Exception:
+                        pass
+                    filtered_positions.append(p)
+                
+                if not filtered_positions:
                     st.info("暂无持仓（或被限流/冷却期返回缓存/空数据）")
                 else:
-                    dfp = pd.DataFrame(positions)
+                    dfp = pd.DataFrame(filtered_positions)
                     st.dataframe(dfp, use_container_width=True, height=260)
 
             with cols[1]:

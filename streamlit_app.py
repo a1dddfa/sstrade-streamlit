@@ -61,56 +61,19 @@ def load_config(cfg_path: str) -> Dict[str, Any]:
 def init_exchange(cfg: Dict[str, Any], override_dry_run: bool = False) -> Any:
     """
     Initialize exchange instance.
-
-    We try common constructor patterns to stay compatible with different BinanceExchange wrappers.
     """
     global_cfg = cfg.get("global") or {}
-    dry_run = bool(override_dry_run or global_cfg.get("dry_run") or global_cfg.get("dryRun") or False)
-
-    # Prefer the common config layout:
-    # cfg["exchanges"]["binance"] as exchange-specific config + cfg["global"] as global config.
     exchanges_cfg = cfg.get("exchanges") or {}
-    binance_cfg = exchanges_cfg.get("binance") or exchanges_cfg.get("BINANCE") or None
+    binance_cfg = exchanges_cfg.get("binance") or exchanges_cfg.get("BINANCE")
+    if binance_cfg is None:
+        raise ValueError("配置缺少 exchanges.binance")
 
-    # Try a few signatures
-    for kwargs in (
-        # Most explicit / preferred
-        {"cfg": binance_cfg, "global_config": global_cfg, "dry_run": dry_run} if binance_cfg is not None else None,
-        {"config": binance_cfg, "global_config": global_cfg, "dry_run": dry_run} if binance_cfg is not None else None,
-        {"cfg": binance_cfg, "global_config": global_cfg, "dryRun": dry_run} if binance_cfg is not None else None,
-        {"config": binance_cfg, "global_config": global_cfg, "dryRun": dry_run} if binance_cfg is not None else None,
+    if override_dry_run:
+        global_cfg = dict(global_cfg)
+        global_cfg["dry_run"] = True
 
-        # Backward compatible (whole cfg)
-        {"cfg": cfg, "dry_run": dry_run},
-        {"config": cfg, "dry_run": dry_run},
-        {"cfg": cfg, "dryRun": dry_run},
-        {"config": cfg, "dryRun": dry_run},
-        {"cfg": cfg},
-        {"config": cfg},
-        {},
-    ):
-        if kwargs is None:
-            continue
-        try:
-            ex = BinanceExchange(**kwargs)  # type: ignore[arg-type]
-            # if constructor didn't accept dry_run, try to set attribute
-            if dry_run and not getattr(ex, "dry_run", False):
-                try:
-                    setattr(ex, "dry_run", True)
-                except Exception:
-                    pass
-            return ex
-        except TypeError:
-            continue
-
-    # Last resort: pass cfg as positional
-    try:
-        # Prefer (binance_cfg, global_cfg) if present, otherwise fallback to whole cfg
-        if binance_cfg is not None:
-            return BinanceExchange(binance_cfg, global_cfg)  # type: ignore[misc]
-        return BinanceExchange(cfg)  # type: ignore[misc]
-    except Exception as e:  # pragma: no cover
-        raise RuntimeError(f"Failed to init BinanceExchange with cfg. err={e}") from e
+    # ✅ 强制用正确层级：BinanceExchange(config, global_config)
+    return BinanceExchange(binance_cfg, global_cfg)
 
 
 # -----------------------------
