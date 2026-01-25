@@ -9,7 +9,43 @@ from typing import Dict, List, Optional
 
 
 import logging
+import copy
 logger = logging.getLogger(__name__)
+
+# -----------------------------
+# Sensitive logging helpers
+# -----------------------------
+_SENSITIVE_KEYS = {
+    "api_key",
+    "api_secret",
+    "secret",
+    "password",
+    "token",
+    "access_token",
+    "refresh_token",
+    "private_key",
+}
+
+def _mask_sensitive(obj):
+    """
+    Recursively mask sensitive fields in dict/list for safe logging.
+    """
+    try:
+        if isinstance(obj, dict):
+            out = {}
+            for k, v in obj.items():
+                if isinstance(k, str) and k.lower() in _SENSITIVE_KEYS:
+                    out[k] = "***MASKED***"
+                else:
+                    out[k] = _mask_sensitive(v)
+            return out
+        if isinstance(obj, list):
+            return [_mask_sensitive(x) for x in obj]
+        return obj
+    except Exception:
+        # If anything goes wrong, don't risk leaking secrets
+        return "***MASKED***"
+
 class BaseExchange(ABC):
     """
     交易所基类
@@ -33,8 +69,14 @@ class BaseExchange(ABC):
         self.proxy = config.get("proxy", None)
         # 添加dry_run支持
         # 打印调试信息
-        logger.info(f"BaseExchange初始化，global_config: {global_config}, dry_run from global: {self.global_config.get('dry_run', 'NOT FOUND')}")
-        logger.info(f"Config: {config}, dry_run from config: {self.config.get('dry_run', 'NOT FOUND')}")
+        safe_global = _mask_sensitive(copy.deepcopy(global_config or {}))
+        safe_config = _mask_sensitive(copy.deepcopy(config or {}))
+        logger.info(
+            f"BaseExchange初始化，global_config: {safe_global}, dry_run from global: {self.global_config.get('dry_run', 'NOT FOUND')}"
+        )
+        logger.info(
+            f"Config: {safe_config}, dry_run from config: {self.config.get('dry_run', 'NOT FOUND')}"
+        )
         
         self.dry_run = self.global_config.get('dry_run', False) or self.config.get('dry_run', False)
         logger.info(f"最终dry_run值: {self.dry_run}")
