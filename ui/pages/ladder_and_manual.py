@@ -22,15 +22,20 @@ import pandas as pd
 import streamlit as st
 
 # Bots should be importable from your project
+_LADDER_IMPORT_ERROR: Optional[str] = None
+_RANGE2_IMPORT_ERROR: Optional[str] = None
+
 try:
     from bots.ladder.bot import LadderBot  # type: ignore
-except Exception:  # pragma: no cover
+except Exception as e:  # pragma: no cover
     LadderBot = None  # type: ignore
+    _LADDER_IMPORT_ERROR = repr(e)
 
 try:
     from bots.range_two.bot import RangeTwoBot  # type: ignore
-except Exception:  # pragma: no cover
+except Exception as e:  # pragma: no cover
     RangeTwoBot = None  # type: ignore
+    _RANGE2_IMPORT_ERROR = repr(e)
 
 
 def _resolve_from_main(name: str):
@@ -78,6 +83,14 @@ def render() -> None:
     exchange = st.session_state.get("exchange")
     if exchange is None:
         st.info("请先在左侧点击「初始化 / 重新连接」")
+        return
+
+    # If bot imports failed, show the real reason early (otherwise you only see a confusing config error later).
+    if LadderBot is None and _LADDER_IMPORT_ERROR:
+        st.error(f"❌ 导入 LadderBot 失败：{_LADDER_IMPORT_ERROR}")
+        return
+    if RangeTwoBot is None and _RANGE2_IMPORT_ERROR:
+        st.error(f"❌ 导入 RangeTwoBot 失败：{_RANGE2_IMPORT_ERROR}")
         return
 
     _get_user_stream_dispatcher = _resolve_from_main("_get_user_stream_dispatcher")

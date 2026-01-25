@@ -89,7 +89,7 @@ class RangeTwoState:
 class RangeTwoBot(BotBase, TickerSubscriptionMixin):
     def __init__(self, exchange: "BinanceExchange", ui_logger: "UILogger"):
         super().__init__()
-        BotBase.__init__(self, name=\"RangeTwoBot\")
+        BotBase.__init__(self, name="RangeTwoBot")
         self.exchange = exchange
         self.log = ui_logger
 

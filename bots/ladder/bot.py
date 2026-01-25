@@ -62,7 +62,7 @@ class LadderState:
 class LadderBot(BotBase, TickerSubscriptionMixin):
     def __init__(self, exchange: BinanceExchange, ui_logger: UILogger):
         super().__init__()
-        BotBase.__init__(self, name=\"LadderBot\")
+        BotBase.__init__(self, name="LadderBot")
         self.exchange = exchange
         self.log = ui_logger
 
@@ -308,16 +308,5 @@ class LadderBot(BotBase, TickerSubscriptionMixin):
                 time.sleep(2)
 
 
-# -----------------------------
-# 区间两单策略：
-# - 输入两档价格（自动取高/低）
-# - A1：在两价中点挂第一单（限价），SL=低价(做多)/高价(做空)，TP=高价±(差/2)
-# - A2：在当前价下方/上方固定百分比挂第二单（可调）
-# - 当 A1 成交后：价格达到“高价(做多)/低价(做空)”时，挂一个 closePosition 的 STOP_MARKET，止损价= A1 挂单价 ±0.1%
-# - 当 A2 成交后：价格达到“高价+差/4(做多)/低价-差/4(做空)”时，挂 closePosition STOP_MARKET，止损价= A2 挂单价 ±0.1%
-#
-# 说明：这里的“止损价”是用于保本/锁盈的触发价（全部止损 closePosition）。
-# -----------------------------
 
-@dataclass
 
