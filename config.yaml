@@ -7,6 +7,8 @@ global:
   proxy: "http://127.0.0.1:7897"
   dry_run: false
   use_ws: false
+  # UI 轮询节奏（秒）：持仓 + 未成交订单统一按这个频率刷新
+  ui_poll_interval_sec: 60
 
 # 交易所配置
 exchanges:

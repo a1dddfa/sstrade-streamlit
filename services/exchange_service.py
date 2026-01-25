@@ -138,6 +138,7 @@ def init_exchange_flow(
         cfg: Dict[str, Any] = load_config(cfg_path)
         # Keep parity with original code (global_cfg used to exist)
         _ = cfg.get("global") or {}
+        st.session_state["app_cfg"] = cfg
 
         cleanup_old_exchange()
 

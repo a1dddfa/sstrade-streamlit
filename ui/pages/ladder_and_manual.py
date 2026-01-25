@@ -16,8 +16,9 @@ Expected legacy symbols in streamlit_app.py (for now):
 from __future__ import annotations
 
 from dataclasses import asdict
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 
+import time
 import pandas as pd
 import streamlit as st
 
@@ -416,6 +417,92 @@ def render() -> None:
         st.dataframe(pd.DataFrame(rows), use_container_width=True, height=220)
     except Exception as e:
         st.warning(f"获取仓位失败：{e}")
+
+    st.divider()
+
+    # -----------------------------
+    # 统一节奏管理器：持仓 + 未成交订单
+    # -----------------------------
+    def _get_poll_interval_sec() -> int:
+        cfg = st.session_state.get("app_cfg") or {}
+        g = cfg.get("global") or {}
+        v = g.get("ui_poll_interval_sec", 60)
+        try:
+            v = int(v)
+        except Exception:
+            v = 60
+        return max(5, v)  # 下限保护，避免过于频繁
+
+    def _fragment_decorator(run_every: str):
+        """
+        Streamlit 自带定时刷新（st.fragment(run_every=...)）。
+        若当前 Streamlit 版本不支持，则降级为普通函数（不自动刷新）。
+        """
+        frag = getattr(st, "fragment", None)
+        if callable(frag):
+            return frag(run_every=run_every)
+        return lambda fn: fn
+
+    poll_interval_sec = _get_poll_interval_sec()
+
+    st.subheader("📌 持仓 / 未成交订单（自动刷新）")
+    st.caption(f"刷新间隔：{poll_interval_sec}s（config.yaml -> global.ui_poll_interval_sec）")
+
+    exchange = st.session_state.get("exchange")
+    if exchange is None:
+        st.info("请先在左侧点击「初始化 / 重新连接」")
+    else:
+        # 选中的 symbol（沿用你页面里已有的 selected_symbol 逻辑）
+        selected_symbol = st.session_state.get("selected_symbol") or ""
+        selected_symbol = str(selected_symbol).strip()
+
+        @_fragment_decorator(run_every=f"{poll_interval_sec}s")
+        def _poll_positions_and_orders():
+            # 1) 拉取持仓
+            positions: List[Dict[str, Any]] = []
+            try:
+                # symbol 为空则获取全量持仓（BinanceExchange.get_positions 支持）
+                positions = exchange.get_positions(selected_symbol or None)
+            except Exception as e:
+                st.warning(f"拉取持仓失败：{e}")
+
+            # 2) 拉取未成交订单
+            open_orders: List[Dict[str, Any]] = []
+            try:
+                # BinanceExchange.get_open_orders 在 WS 未就绪时：
+                # - symbol=None 会返回 []（代码里有保护）
+                # - 建议传 selected_symbol，能走 REST futures_get_open_orders
+                open_orders = exchange.get_open_orders(selected_symbol or None)
+            except Exception as e:
+                st.warning(f"拉取未成交订单失败：{e}")
+
+            st.session_state["__poll_ts__"] = time.time()
+            st.session_state["__positions_cache__"] = positions
+            st.session_state["__open_orders_cache__"] = open_orders
+
+            # 渲染
+            cols = st.columns(2)
+            with cols[0]:
+                st.markdown("#### 持仓")
+                if not positions:
+                    st.info("暂无持仓（或被限流/冷却期返回缓存/空数据）")
+                else:
+                    dfp = pd.DataFrame(positions)
+                    st.dataframe(dfp, use_container_width=True, height=260)
+
+            with cols[1]:
+                st.markdown("#### 未成交订单")
+                if not open_orders:
+                    st.info("暂无未成交订单（或 WS 未就绪且 symbol 为空 / 被限流返回空）")
+                else:
+                    dfo = pd.DataFrame(open_orders)
+                    st.dataframe(dfo, use_container_width=True, height=260)
+
+            # 如果 fragment 不可用，提示用户升级/手动刷新
+            if not callable(getattr(st, "fragment", None)):
+                st.warning("当前 Streamlit 版本不支持 st.fragment(run_every=...)，无法自动每 60s 刷新；请升级 Streamlit 或手动刷新页面。")
+
+        _poll_positions_and_orders()
 
     st.divider()
     st.markdown("### 🧷 阶梯运行状态")
