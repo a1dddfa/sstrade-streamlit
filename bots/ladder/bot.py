@@ -28,6 +28,7 @@ except Exception:  # pragma: no cover
     from binance_exchange import BinanceExchange  # type: ignore
 
 
+@dataclass
 class LadderConfig:
     symbol: str = "ETHUSDT"
     side: str = "short"  # short/long（对应你策略：涨多做空 / 跌多做多）
