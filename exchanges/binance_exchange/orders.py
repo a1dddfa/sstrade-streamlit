@@ -2,6 +2,7 @@
 """
 Auto-split from the original binance_exchange.py.
 """
+import logging
 from .deps import (
     logger, trade_logger,
     time, threading, os, json,
