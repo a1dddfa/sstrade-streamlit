@@ -67,8 +67,20 @@ def init_exchange(cfg: Dict[str, Any], override_dry_run: bool = False) -> Any:
     global_cfg = cfg.get("global") or {}
     dry_run = bool(override_dry_run or global_cfg.get("dry_run") or global_cfg.get("dryRun") or False)
 
+    # Prefer the common config layout:
+    # cfg["exchanges"]["binance"] as exchange-specific config + cfg["global"] as global config.
+    exchanges_cfg = cfg.get("exchanges") or {}
+    binance_cfg = exchanges_cfg.get("binance") or exchanges_cfg.get("BINANCE") or None
+
     # Try a few signatures
     for kwargs in (
+        # Most explicit / preferred
+        {"cfg": binance_cfg, "global_config": global_cfg, "dry_run": dry_run} if binance_cfg is not None else None,
+        {"config": binance_cfg, "global_config": global_cfg, "dry_run": dry_run} if binance_cfg is not None else None,
+        {"cfg": binance_cfg, "global_config": global_cfg, "dryRun": dry_run} if binance_cfg is not None else None,
+        {"config": binance_cfg, "global_config": global_cfg, "dryRun": dry_run} if binance_cfg is not None else None,
+
+        # Backward compatible (whole cfg)
         {"cfg": cfg, "dry_run": dry_run},
         {"config": cfg, "dry_run": dry_run},
         {"cfg": cfg, "dryRun": dry_run},
@@ -77,6 +89,8 @@ def init_exchange(cfg: Dict[str, Any], override_dry_run: bool = False) -> Any:
         {"config": cfg},
         {},
     ):
+        if kwargs is None:
+            continue
         try:
             ex = BinanceExchange(**kwargs)  # type: ignore[arg-type]
             # if constructor didn't accept dry_run, try to set attribute
@@ -91,6 +105,9 @@ def init_exchange(cfg: Dict[str, Any], override_dry_run: bool = False) -> Any:
 
     # Last resort: pass cfg as positional
     try:
+        # Prefer (binance_cfg, global_cfg) if present, otherwise fallback to whole cfg
+        if binance_cfg is not None:
+            return BinanceExchange(binance_cfg, global_cfg)  # type: ignore[misc]
         return BinanceExchange(cfg)  # type: ignore[misc]
     except Exception as e:  # pragma: no cover
         raise RuntimeError(f"Failed to init BinanceExchange with cfg. err={e}") from e
@@ -174,13 +191,13 @@ def main() -> None:
     ui_logger = _ensure_ui_logger_registered()
     page = render_sidebar()
 
-    if page == "🕯 锤子线扫描":
+    if page == "hammer":
         render_hammer_scanner()
-    elif page == "🧩 阶梯 + 手动下单":
+    elif page == "ladder":
         render_ladder_and_manual()
-    elif page == "🧾 日志":
+    elif page == "logs":
         render_logs_page(ui_logger)
-    elif page == "📊 账户":
+    elif page == "account":
         render_account_page()
     else:
         st.info("未知页面")

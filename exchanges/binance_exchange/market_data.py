@@ -13,6 +13,8 @@ from .deps import (
 
 class MarketDataMixin:
     def __init__(self, *args, **kwargs):
+        # ✅ Cooperative multiple inheritance: do not cut off CoreBinanceExchange/BaseExchange __init__
+        super().__init__(*args, **kwargs)
         self._last_ticker_fetch_ts: dict[str, float] = {}
         self._last_ticker_cache: dict[str, dict] = {}
 

@@ -33,6 +33,14 @@ def _resolve_from_main(name: str):
     return getattr(main, name)
 
 
+_PAGE_LABELS = {
+    "hammer": "🔨 锤子线扫描",
+    "ladder": "🧩 阶梯 + 手动下单",
+    "logs": "🧾 日志",
+    "account": "📊 账户",
+}
+
+
 def render_sidebar(
     *,
     cfg_path_default: str = "config.yaml",
@@ -61,12 +69,15 @@ def render_sidebar(
 
         st.divider()
         st.header("页面")
-        page = st.radio(
+        page_key = st.radio(
             "选择功能页",
-            options=["🕯 锤子线扫描", "🧩 阶梯 + 手动下单", "🧾 日志", "📊 账户"],
+            options=["hammer", "ladder", "logs", "account"],
+            format_func=lambda k: _PAGE_LABELS.get(k, str(k)),
             index=0,
             key="page_select",
         )
 
         if st.button("🔌 初始化 / 重新连接", key="init_exchange"):
             init_exchange_flow(cfg_path, override_dry_run=override_dry_run)
+
+    return page_key
