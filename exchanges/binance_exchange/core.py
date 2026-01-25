@@ -153,14 +153,19 @@ class CoreBinanceExchange(BaseExchange):
         """
         try:
             # 使用币安官方python-binance库初始化客户端
-            self.client = Client(
+            kwargs = dict(
                 api_key=self.api_key,
                 api_secret=self.api_secret,
                 testnet=self.testnet,
-                requests_params={
-                    'proxies': {'http': self.proxy, 'https': self.proxy} if self.proxy else None
-                }
             )
+
+            # 关键修复：没有 proxy 时不要传 proxies=None（python-binance 内部会对 proxies 调 .get()）
+            if self.proxy:
+                kwargs["requests_params"] = {
+                    "proxies": {"http": self.proxy, "https": self.proxy}
+                }
+
+            self.client = Client(**kwargs)
             
             logger.info(f"成功初始化币安客户端: {'测试网' if self.testnet else '主网'}")
         except Exception as e:
