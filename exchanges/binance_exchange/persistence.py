@@ -2,6 +2,7 @@
 """
 Auto-split from the original binance_exchange.py.
 """
+import uuid
 from .deps import (
     logger, trade_logger,
     time, threading, os, json,
@@ -12,6 +13,137 @@ from .deps import (
 
 
 class PersistenceMixin:
+    # =========================
+    # ⭐ Local-trigger orders (方案B)
+    # =========================
+    def _load_pending_local_trigger_orders(self) -> None:
+        """从本地 JSON 恢复 pending 本地触发订单（进程重启不丢）。"""
+        try:
+            path = getattr(self, "_pending_local_trigger_path", None)
+            if not path or (not os.path.exists(path)):
+                return
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f) or {}
+            if isinstance(data, dict) and "data" in data and isinstance(data["data"], dict):
+                data = data["data"]
+            if not isinstance(data, dict):
+                logger.warning(f"[PENDING_LTR] invalid json structure, ignore: {path}")
+                return
+            with self._ws_lock:
+                self._pending_local_trigger_orders = data
+            logger.info(f"[PENDING_LTR] loaded: {len(data)} items from {path}")
+        except Exception as e:
+            logger.warning(f"[PENDING_LTR] load failed, ignore: {e}", exc_info=True)
+
+    def _save_pending_local_trigger_orders(self) -> None:
+        """把 pending 本地触发订单落盘到 JSON（尽量原子写入）。"""
+        try:
+            path = getattr(self, "_pending_local_trigger_path", None)
+            if not path:
+                return
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            with self._ws_lock:
+                data = dict(self._pending_local_trigger_orders)
+            tmp_path = f"{path}.tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, path)
+            logger.info(f"[PENDING_LTR] saved: {len(data)} items to {path}")
+        except Exception as e:
+            logger.warning(f"[PENDING_LTR] save failed, ignore: {e}", exc_info=True)
+
+    def get_pending_local_trigger_orders(self):
+        """给 UI 用：返回当前待触发的本地触发订单列表。"""
+        out = []
+        with self._ws_lock:
+            for k, v in (self._pending_local_trigger_orders or {}).items():
+                row = dict(v)
+                row.setdefault("id", k)
+                out.append(row)
+        return out
+
+    def schedule_local_trigger_order(
+        self,
+        *,
+        symbol: str,
+        activate_price: float,
+        activate_condition: str,
+        order_request: dict,
+        tag: str = "LOCAL_TRIGGER",
+    ) -> dict:
+        """
+        方案B：本地触发价满足后，才把真实订单提交到交易所。
+        """
+        sym = self._format_symbol(symbol)
+        cond = str(activate_condition or "").lower().strip()
+        if cond not in ("gte", "lte"):
+            raise ValueError("activate_condition must be gte/lte")
+
+        oid = f"{tag}_{int(time.time()*1000)}_{uuid.uuid4().hex[:8]}"
+        cfg = {
+            "symbol": sym,
+            "activatePrice": float(activate_price),
+            "activateCondition": cond,
+            "orderRequest": dict(order_request or {}),
+            "tag": str(tag),
+            "createdTs": int(time.time() * 1000),
+        }
+        with self._ws_lock:
+            self._pending_local_trigger_orders[oid] = cfg
+        self._save_pending_local_trigger_orders()
+        return {"status": "LOCAL_DEFERRED", "id": oid, **cfg}
+
+    def _try_trigger_local_trigger_orders(self, symbol_fmt: str, last_price: float) -> None:
+        """轮询触发：满足 activatePrice 条件后，提交真实订单到交易所。"""
+        if not symbol_fmt or last_price <= 0:
+            return
+        with self._ws_lock:
+            items = [(k, v) for k, v in (self._pending_local_trigger_orders or {}).items()
+                     if v.get("symbol") == symbol_fmt]
+        if not items:
+            return
+
+        triggered = []
+        for k, cfg in items:
+            act = float(cfg.get("activatePrice") or 0.0)
+            cond = str(cfg.get("activateCondition") or "").lower().strip()
+            if (last_price >= act) if cond == "gte" else (last_price <= act):
+                triggered.append((k, cfg))
+
+        for k, cfg in triggered:
+            req = dict(cfg.get("orderRequest") or {})
+            p = dict(req.get("params") or {})
+            p["_skip_local_trigger"] = True
+            req["params"] = p
+            self.create_order(
+                symbol=req.get("symbol") or symbol_fmt,
+                side=req["side"],
+                order_type=req["order_type"],
+                quantity=float(req.get("quantity") or 0.0),
+                price=req.get("price"),
+                params=req.get("params"),
+            )
+            with self._ws_lock:
+                self._pending_local_trigger_orders.pop(k, None)
+            self._save_pending_local_trigger_orders()
+
+    def poll_local_triggers_once(self) -> None:
+        """给轮询线程用：ticker 拉取 + 本地触发"""
+        symbols = set()
+        with self._ws_lock:
+            for v in (self._pending_deferred_stop_limits or {}).values():
+                if v.get("symbol"):
+                    symbols.add(v["symbol"])
+            for v in (self._pending_local_trigger_orders or {}).values():
+                if v.get("symbol"):
+                    symbols.add(v["symbol"])
+        for sym in symbols:
+            t = self.get_ticker(sym) or {}
+            px = float(t.get("lastPrice") or t.get("markPrice") or 0.0)
+            if px > 0:
+                self._try_trigger_deferred_stop_limits(sym, px)
+                self._try_trigger_local_trigger_orders(sym, px)
+
     def _load_pending_stop_losses(self) -> None:
         """从本地 JSON 恢复 pending SL（进程重启不丢）。"""
         try:
@@ -192,19 +324,6 @@ class PersistenceMixin:
         with self._ws_lock:
             self._pending_deferred_stop_limits[key] = cfg
         self._save_pending_deferred_stop_limits()
-
-        # ✅ 确保 ticker WS 在跑：没有其他订阅者时也能触发
-        try:
-            if not self.dry_run:
-                if sym not in self._internal_deferred_ticker_cbs:
-                    def _cb(_t):
-                        # 不做任何事；真正的触发检查在 _handle_ws_ticker_message 里统一做
-                        return
-                    self._internal_deferred_ticker_cbs[sym] = _cb
-                    self.ws_subscribe_ticker(sym, _cb)
-        except Exception:
-            # 订阅失败不影响注册（后续可依赖外部 bot 的行情订阅触发）
-            logger.warning(f"[PENDING_DSL] failed to ensure ticker ws for {sym}", exc_info=True)
 
         return {"status": "DEFERRED", "id": key, **cfg}
 

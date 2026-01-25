@@ -56,6 +56,54 @@ class OrdersMixin:
             订单信息字典
         """
         try:
+            # =========================
+            # ⭐ 方案B：本地触发价 -> 到价后才提交订单到交易所
+            # =========================
+            p0 = (params or {}).copy()
+            if not bool(p0.get("_skip_local_trigger")):
+                ltp = (
+                    p0.get("localTriggerPrice")
+                    or p0.get("local_trigger_price")
+                    or p0.get("local_trigger")
+                )
+                if ltp is not None:
+                    immediate = bool(
+                        p0.get("localTriggerImmediate")
+                        or p0.get("local_trigger_immediate")
+                        or False
+                    )
+                    # 条件：默认按方向推断（long: gte, short: lte），也可显式传
+                    cond = str(
+                        p0.get("localTriggerCondition")
+                        or p0.get("local_trigger_condition")
+                        or ("gte" if str(side).lower() == "long" else "lte")
+                    ).lower().strip()
+
+                    if not immediate:
+                        # 触发时再 create_order：强制跳过本地触发逻辑，避免递归
+                        req = {
+                            "symbol": symbol,
+                            "side": side,
+                            "order_type": order_type,
+                            "quantity": float(quantity),
+                            "price": price,
+                            "params": {k: v for k, v in p0.items()
+                                       if k not in ("localTriggerPrice","local_trigger_price","local_trigger",
+                                                    "localTriggerImmediate","local_trigger_immediate",
+                                                    "localTriggerCondition","local_trigger_condition")}
+                        }
+                        req["params"]["_skip_local_trigger"] = True
+
+                        tag = p0.get("tag") or "LOCAL_TRIGGER"
+                        return self.schedule_local_trigger_order(
+                            symbol=symbol,
+                            activate_price=float(ltp),
+                            activate_condition=str(cond),
+                            order_request=req,
+                            tag=str(tag),
+                        )
+                    # immediate=True：就当没开本地触发，继续走原下单逻辑（立即提交到交易所）
+
             # ⭐ 两段式：deferred_stop_limit（先到 activatePrice 再挂 STOP_LIMIT）
             if str(order_type).lower() in ("deferred_stop_limit", "delayed_stop_limit", "arm_stop_limit", "defer_stop_limit"):
                 p = (params or {}).copy()

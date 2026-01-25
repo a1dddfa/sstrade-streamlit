@@ -230,6 +230,7 @@ class WebsocketMixin:
                 px0 = float(ticker.get("lastPrice") or 0.0)
                 if px0 > 0:
                     self._try_trigger_deferred_stop_limits(symbol, px0)
+                    self._try_trigger_local_trigger_orders(symbol, px0)
             except Exception:
                 pass
             

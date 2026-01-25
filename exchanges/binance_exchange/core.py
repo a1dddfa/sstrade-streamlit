@@ -78,6 +78,10 @@ class CoreBinanceExchange(BaseExchange):
         # 先等价格达到 activatePrice，再下真正的 STOP_LIMIT（带 stopPrice+price），用于锁盈/保本。
         # key: 用户自定义 id（通常用 tag 或 clientOrderId），val: config dict
         self._pending_deferred_stop_limits: Dict[str, Dict[str, Any]] = {}
+
+        # ⭐ 方案B：本地触发后再提交订单（通用）
+        self._pending_local_trigger_orders: Dict[str, Dict[str, Any]] = {}
+
         # ✅ pending deferred SL 持久化文件路径（可从 global_config 配）
         self._pending_deferred_sl_path = self.global_config.get(
             "pending_deferred_sl_path",
@@ -92,10 +96,25 @@ class CoreBinanceExchange(BaseExchange):
             os.path.join(os.getcwd(), "pending_stop_losses.json"),
         )
 
+        # ✅ pending local-trigger 持久化文件路径（可从 global_config 配）
+        self._pending_local_trigger_path = self.global_config.get(
+            "pending_local_trigger_path",
+            os.path.join(os.getcwd(), "pending_local_trigger_orders.json"),
+        )
+
         # ✅ 启动时恢复 pending SL（进程重启不丢）
         self._load_pending_stop_losses()
         # ✅ 启动时恢复 deferred STOP_LIMIT（进程重启不丢）
         self._load_pending_deferred_stop_limits()
+        # ✅ 启动时恢复本地触发订单（进程重启不丢）
+        self._load_pending_local_trigger_orders()
+
+        # ✅ 启动轮询触发线程（不依赖 WS）
+        self._local_trigger_poll_stop = threading.Event()
+        self._local_trigger_poll_thread = None
+        if bool((self.global_config or {}).get("enable_local_trigger_polling", True)):
+            self._start_local_trigger_polling_thread()
+
         # 持仓缓存：key 为 symbol（或 "__ALL__" 表示所有持仓），value 为 positions 列表
         self._last_positions: Dict[str, List[Dict]] = {}
 
@@ -148,6 +167,42 @@ class CoreBinanceExchange(BaseExchange):
         }
         # 是否处于“账户 REST 降频”模式
         self._account_rest_degraded: bool = False
+
+    def _start_local_trigger_polling_thread(self):
+        """后台轮询：检查 deferred_stop_limit + 本地触发订单是否满足触发条件。"""
+        if getattr(self, "_local_trigger_poll_thread", None) is not None:
+            return
+
+        interval = float((self.global_config or {}).get("local_trigger_poll_interval_sec", 0.5))
+        interval = max(0.2, interval)
+
+        def _run():
+            logger.info(f"[LOCAL_TRIGGER] polling thread started, interval={interval}s")
+            while not self._local_trigger_poll_stop.is_set():
+                try:
+                    if not self.dry_run:
+                        # 一次轮询覆盖所有涉及 symbol
+                        self.poll_local_triggers_once()
+                except Exception:
+                    logger.warning("[LOCAL_TRIGGER] poll tick failed", exc_info=True)
+                # 小睡
+                try:
+                    time.sleep(interval)
+                except Exception:
+                    pass
+            logger.info("[LOCAL_TRIGGER] polling thread stopped")
+
+        th = threading.Thread(target=_run, name="LocalTriggerPoller", daemon=True)
+        th.start()
+        self._local_trigger_poll_thread = th
+
+    def shutdown(self):
+        """可选：如果你项目里有统一 shutdown，就把 stop event 放这里。"""
+        try:
+            if getattr(self, "_local_trigger_poll_stop", None):
+                self._local_trigger_poll_stop.set()
+        except Exception:
+            pass
 
     def _init_client(self):
         """

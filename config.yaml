@@ -9,6 +9,10 @@ global:
   use_ws: false
   # UI 轮询节奏（秒）：持仓 + 未成交订单统一按这个频率刷新
   ui_poll_interval_sec: 60
+  # 本地触发订单轮询设置
+  enable_local_trigger_polling: true
+  local_trigger_poll_interval_sec: 0.5
+  pending_local_trigger_path: pending_local_trigger_orders.json
 
 # 交易所配置
 exchanges:

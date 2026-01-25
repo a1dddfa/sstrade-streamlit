@@ -309,6 +309,20 @@ def render() -> None:
     auto_protection = st.toggle("自动挂保护单（TP/SL）", value=False)
     st.caption("关闭时：只下主单；开启时：主单下完后会自动创建 TP/SL 子单。")
 
+    # =========================
+    # ⭐ 方案B：本地触发后再提交订单到交易所
+    # =========================
+    use_local_trigger = st.toggle("本地触发后再提交到交易所", value=False)
+    local_trigger_price = None
+    local_trigger_immediate = False
+    if use_local_trigger:
+        lt1, lt2 = st.columns([1, 1])
+        with lt1:
+            local_trigger_price = st.number_input("本地触发价(localTriggerPrice)", min_value=0.0, value=0.0, step=0.01, format="%.6f")
+        with lt2:
+            local_trigger_immediate = st.toggle("立即触发（直接提交到交易所）", value=False)
+        st.caption("说明：关闭\"立即触发\"时，会先在本地轮询价格，满足本地触发价后才把订单提交到交易所。")
+
     pcol1, pcol2, pcol3 = st.columns([1, 1, 2])
     with pcol1:
         enable_tp = st.toggle("启用止盈(TP)", value=False, disabled=not auto_protection)
@@ -363,6 +377,13 @@ def render() -> None:
                     "tag": "MANUAL_UI",
                     "positionSide": position_side,
                 }
+
+                # 方案B参数注入
+                if use_local_trigger:
+                    if local_trigger_price is None or float(local_trigger_price) <= 0:
+                        raise ValueError("开启本地触发时，localTriggerPrice 必须 > 0")
+                    params["localTriggerPrice"] = float(local_trigger_price)
+                    params["localTriggerImmediate"] = bool(local_trigger_immediate)
 
                 if auto_protection:
                     if enable_tp and tp_price and tp_price > 0:
