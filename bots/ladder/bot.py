@@ -5,8 +5,10 @@ Keeping behavior unchanged; only moved out for maintainability.
 """
 from __future__ import annotations
 
+import queue
 import threading
 import time
+import traceback
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, Optional
 
