@@ -1,0 +1,30 @@
+{
+  "MANUAL_UI_1769348218176_f4bbdd66": {
+    "symbol": "TREEUSDT",
+    "activatePrice": 0.1095,
+    "activateCondition": "gte",
+    "orderRequest": {
+      "symbol": "TREEUSDT",
+      "side": "long",
+      "order_type": "stop_loss_limit",
+      "quantity": 104.0,
+      "price": 0.16,
+      "params": {
+        "timeInForce": "GTC",
+        "tag": "MANUAL_UI",
+        "positionSide": "LONG",
+        "stopPrice": 0.13,
+        "_skip_local_trigger": true
+      }
+    },
+    "tag": "MANUAL_UI",
+    "createdTs": 1769348218176,
+    "triggerStatus": "TRIGGERED",
+    "triggerResult": "FAILED",
+    "triggeredTs": 1769349193278,
+    "orderStatus": "FAILED",
+    "submittedTs": 1769349193278,
+    "triggerError": "BinanceAPIException(<Response [400]>, 400, '{\"code\":-4183,\"msg\":\"Limit price can\\'t be higher than 0.1494999\"}')",
+    "orderError": "BinanceAPIException(<Response [400]>, 400, '{\"code\":-4183,\"msg\":\"Limit price can\\'t be higher than 0.1494999\"}')"
+  }
+}

@@ -173,8 +173,11 @@ class CoreBinanceExchange(BaseExchange):
         if getattr(self, "_local_trigger_poll_thread", None) is not None:
             return
 
-        interval = float((self.global_config or {}).get("local_trigger_poll_interval_sec", 0.5))
-        interval = max(0.2, interval)
+        # ✅ 修复：默认不要 0.5s 的高频轮询，默认改为 60s（分钟级）
+        # 如需更快轮询，用户可显式在 config.yaml 里调小。
+        interval = float((self.global_config or {}).get("local_trigger_poll_interval_sec", 60.0))
+        # 最小保护：避免 0 或极小值导致 CPU/日志刷屏（仍允许用户显式配置到 >=1s）
+        interval = max(1.0, interval)
 
         def _run():
             logger.info(f"[LOCAL_TRIGGER] polling thread started, interval={interval}s")
