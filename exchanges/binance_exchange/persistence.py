@@ -62,6 +62,30 @@ class PersistenceMixin:
                 out.append(row)
         return out
 
+    def cancel_local_trigger_order(self, oid: str) -> bool:
+        """
+        取消本地触发订单：标记为 CANCELLED 并落盘。
+        取消后不会再被 _try_trigger_local_trigger_orders 处理（它只处理 triggerStatus=PENDING）。
+        """
+        if not oid:
+            return False
+
+        with self._ws_lock:
+            cur = (self._pending_local_trigger_orders or {}).get(oid)
+            if not cur:
+                return False
+
+            cur["triggerStatus"] = "CANCELLED"
+            cur["triggerResult"] = "CANCELLED"
+            cur["orderStatus"] = "CANCELLED"
+            cur["orderError"] = None
+            cur["triggerError"] = None
+            cur["cancelledTs"] = int(time.time() * 1000)
+            self._pending_local_trigger_orders[oid] = cur
+
+        self._save_pending_local_trigger_orders()
+        return True
+
     def schedule_local_trigger_order(
         self,
         *,

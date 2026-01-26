@@ -534,8 +534,8 @@ def render() -> None:
             # 1) 拉取持仓
             positions: List[Dict[str, Any]] = []
             try:
-                # ⚠️ UI 禁止主动打全量仓位 
-                all_pos = exchange._last_positions.get("__ALL__", [])
+                # ✅ 用 get_positions 触发 TTL/缓存刷新（避免只能切页才更新）
+                all_pos = exchange.get_positions(None) or []
             except Exception as e:
                 st.warning(f"获取仓位失败：{e}")
                 all_pos = []
@@ -546,7 +546,9 @@ def render() -> None:
                 # BinanceExchange.get_open_orders 在 WS 未就绪时：
                 # - symbol=None 会返回 []（代码里有保护）
                 # - 建议传 selected_symbol，能走 REST futures_get_open_orders
-                open_orders = exchange.get_open_orders(selected_symbol or None)
+                sym_for_orders = selected_symbol or (st.session_state.get("bot_symbol") or "")
+                sym_for_orders = str(sym_for_orders).strip() or None
+                open_orders = exchange.get_open_orders(sym_for_orders)
             except Exception as e:
                 st.warning(f"拉取未成交订单失败：{e}")
 
@@ -600,27 +602,33 @@ def render() -> None:
 
     try:
         ltr = exchange.get_pending_local_trigger_orders() or []
-        rows = []
-        for r in ltr:
-            rows.append({
-                "id": r.get("id"),
-                "symbol": r.get("symbol"),
-                "activatePrice": r.get("activatePrice"),
-                "activateCondition": r.get("activateCondition"),
-                "tag": r.get("tag"),
-
-                "triggerStatus": r.get("triggerStatus"),
-                "triggerResult": r.get("triggerResult"),
-                "triggerError": r.get("triggerError"),
-                "triggeredTs": r.get("triggeredTs"),
-
-                "orderStatus": r.get("orderStatus"),
-                "orderId": r.get("orderId"),
-                "clientOrderId": r.get("clientOrderId"),
-                "orderError": r.get("orderError"),
-                "submittedTs": r.get("submittedTs"),
-            })
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, height=300)
+        if not ltr:
+            st.info("暂无本地触发挂单")
+        else:
+            st.caption("仅支持取消 triggerStatus=PENDING 的条目（取消后不会再被轮询触发）。")
+            for r in ltr:
+                oid = r.get("id")
+                c1, c2, c3, c4, c5, c6 = st.columns([2.6, 1.2, 1.6, 1.6, 3.0, 1.0])
+                with c1:
+                    st.write(oid)
+                with c2:
+                    st.write(r.get("symbol"))
+                with c3:
+                    st.write(f'{r.get("activateCondition")} {r.get("activatePrice")}')
+                with c4:
+                    st.write(f'{r.get("triggerStatus")} / {r.get("triggerResult")}')
+                with c5:
+                    err = r.get("triggerError") or r.get("orderError")
+                    st.write(err if err else "")
+                with c6:
+                    can_cancel = (str(r.get("triggerStatus") or "").upper() == "PENDING")
+                    if st.button("取消", key=f"cancel_ltr_{oid}", disabled=not can_cancel):
+                        ok = exchange.cancel_local_trigger_order(str(oid))
+                        if ok:
+                            st.success(f"已取消：{oid}")
+                            st.rerun()
+                        else:
+                            st.warning(f"取消失败/不存在：{oid}")
     except Exception as e:
         st.warning(f"获取本地触发订单状态失败：{e}")
 
