@@ -86,6 +86,25 @@ class PersistenceMixin:
         self._save_pending_local_trigger_orders()
         return True
 
+    def clear_finished_local_trigger_orders(self) -> int:
+        """
+        清除已结束(不再活跃)的本地触发单：
+        - triggerStatus != PENDING 的都视为已结束（例如 TRIGGERED 后成功/失败）
+        返回清除数量
+        """
+        removed = 0
+        with self._ws_lock:
+            keys = [
+                k for k, v in (self._pending_local_trigger_orders or {}).items()
+                if str(v.get("triggerStatus", "PENDING")).upper() != "PENDING"
+            ]
+            for k in keys:
+                self._pending_local_trigger_orders.pop(k, None)
+                removed += 1
+        if removed:
+            self._save_pending_local_trigger_orders()
+        return removed
+
     def schedule_local_trigger_order(
         self,
         *,
