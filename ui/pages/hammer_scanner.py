@@ -56,6 +56,56 @@ def render() -> None:
         "只允许形态出现在最后 N 根，并做放量与趋势过滤。缓存 TTL 用于避免频繁请求导致限流。"
     )
 
+    def _render_hammer_table(rows: List[Dict[str, Any]]) -> None:
+        if not rows:
+            return
+
+        df = pd.DataFrame(rows)
+        if "symbol" in df.columns:
+            df["symbol"] = df["symbol"].astype(str).str.upper().str.replace("/", "", regex=False)
+
+        column_map = {
+            "symbol": "交易对",
+            "mode": "建议方向",
+            "pattern": "形态",
+            "pinbar_index": "出现位置",
+            "hammer_score": "形态强度",
+            "volume_ratio": "放量倍数",
+            "same_dir_k_count": "同向K数量(近6)",
+            "extreme_dist": "极值距离(近6)",
+            "extreme_dist_ratio": "极值/锤长",
+            "hammer_len": "锤子线长度",
+            "extreme_type": "极值类型",
+            "priority": "优先",
+            "slope": "趋势斜率",
+        }
+        df_show = df.rename(columns=column_map)
+
+        if "建议方向" in df_show.columns:
+            df_show["建议方向"] = df_show["建议方向"].map({"short": "做空", "long": "做多"}).fillna(df_show["建议方向"])
+
+        if "✅选择" not in df_show.columns:
+            df_show.insert(0, "✅选择", False)
+
+        edited = st.data_editor(
+            df_show,
+            use_container_width=True,
+            height=460,
+            hide_index=True,
+            column_config={"✅选择": st.column_config.CheckboxColumn(required=False)},
+            key="hammer_table_editor",  # ✅ 切页回来还能保留勾选（同一 session）
+        )
+
+        picked = edited[edited["✅选择"] == True]
+        colP1, colP2 = st.columns([1, 2])
+        with colP1:
+            if st.button("➡️ 使用选中交易对", disabled=picked.empty, key="use_hammer_pick"):
+                sym = str(picked.iloc[0]["交易对"]).strip().upper().replace("/", "")
+                st.session_state["selected_symbol"] = sym
+                st.success(f"已选择：{sym}（已同步到下单面板）")
+        with colP2:
+            st.caption("勾选一行后点按钮，会把交易对同步到下单面板的输入框。")
+
     if exchange is None:
         st.info("请先在左侧点击「初始化 / 重新连接」")
     else:
@@ -88,53 +138,7 @@ def render() -> None:
                 if not rows:
                     st.warning("本次扫描没有命中符合条件的锤子线/倒锤子线。可尝试：降低放量倍数阈值、增大回看根数、或切换周期。")
                 else:
-                    df = pd.DataFrame(rows)
-                    if "symbol" in df.columns:
-                        df["symbol"] = df["symbol"].astype(str).str.upper().str.replace("/", "", regex=False)
-
-                    column_map = {
-                        "symbol": "交易对",
-                        "mode": "建议方向",
-                        "pattern": "形态",
-                        "pinbar_index": "出现位置",
-                        "hammer_score": "形态强度",
-                        "volume_ratio": "放量倍数",
-                        "same_dir_k_count": "同向K数量(近6)",
-                        "extreme_dist": "极值距离(近6)",
-                        "extreme_dist_ratio": "极值/锤长",
-                        "hammer_len": "锤子线长度",
-                        "extreme_type": "极值类型",
-                        "priority": "优先",
-                        "slope": "趋势斜率",
-                    }
-                    df_show = df.rename(columns=column_map)
-
-                    if "建议方向" in df_show.columns:
-                        df_show["建议方向"] = df_show["建议方向"].map({
-                            "short": "做空",
-                            "long": "做多",
-                        }).fillna(df_show["建议方向"])
-
-                    if "✅选择" not in df_show.columns:
-                        df_show.insert(0, "✅选择", False)
-
-                    edited = st.data_editor(
-                        df_show,
-                        use_container_width=True,
-                        height=460,
-                        hide_index=True,
-                        column_config={"✅选择": st.column_config.CheckboxColumn(required=False)},
-                    )
-
-                    picked = edited[edited["✅选择"] == True]
-                    colP1, colP2 = st.columns([1, 2])
-                    with colP1:
-                        if st.button("➡️ 使用选中交易对", disabled=picked.empty):
-                            sym = str(picked.iloc[0]["交易对"]).strip().upper().replace("/", "")
-                            st.session_state["selected_symbol"] = sym
-                            st.success(f"已选择：{sym}（已同步到下单面板）")
-                    with colP2:
-                        st.caption("勾选一行后点按钮，会把交易对同步到下单面板的输入框。")
+                    _render_hammer_table(rows)
 
             except Exception as e:
                 st.error(f"扫描失败：{e}")
@@ -147,6 +151,7 @@ def render() -> None:
                     st.info(f"扫描已暂停：当前展示缓存结果（上次扫描：{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(float(ts)))}）")
                 else:
                     st.info("扫描已暂停：当前展示缓存结果（无时间戳）")
+                _render_hammer_table(rows)
             else:
                 st.info("扫描已暂停：暂无缓存结果。你可以点一次“手动扫描一次”。")
 

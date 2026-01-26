@@ -291,7 +291,7 @@ class CoreBinanceExchange(BaseExchange):
             "trailing_stop": "TRAILING_STOP_MARKET",
             "stop_loss_limit": "STOP",          # 止损限价单
             "take_profit": "TAKE_PROFIT",       # ✅ 新增：止盈触发单
-            "take_profit_limit": "TAKE_PROFIT_LIMIT",  # 止盈限价单
+            "take_profit_limit": "TAKE_PROFIT",  # Futures: 用 TAKE_PROFIT + (stopPrice, price) 表示触发后挂限价
         }
 
         # 转成小写后查表，找不到就默认转大写传出去（尽量接近币安格式）
@@ -307,7 +307,6 @@ class CoreBinanceExchange(BaseExchange):
             "TRAILING_STOP_MARKET",
             "TAKE_PROFIT",
             "TAKE_PROFIT_MARKET",
-            "TAKE_PROFIT_LIMIT",   # ✅ 补充这一项，避免误报 warning
         ]
         if formatted_type not in valid_order_types:
             logger.warning(f"无效的订单类型: {order_type}, 已转换为: {formatted_type}")

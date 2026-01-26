@@ -299,13 +299,16 @@ def render() -> None:
 
     # mark price (hint only)
     mark = None
+    last_price = None
     try:
         # ✅ UI 只想"展示参考价"，不要把 symbol 注册进 ticker watchlist
         # get_ticker() 在开启 watch 模式时会 add_watch_symbol()，导致 ETHUSDT 这类默认值被持续轮询
         t = exchange.fetch_ticker(sym2) or {}
-        mark = float(t.get("lastPrice") or t.get("markPrice") or 0.0) or None
+        mark = float(t.get("markPrice") or t.get("lastPrice") or 0.0) or None
+        last_price = float(t.get("lastPrice") or t.get("markPrice") or 0.0) or None
     except Exception:
         mark = None
+        last_price = None
     st.caption(f"当前价(参考)：{mark}" if mark else "当前价：获取失败（不影响你手动输入价格下单）")
 
     auto_protection = st.toggle("自动挂保护单（TP/SL）", value=False)
@@ -315,14 +318,47 @@ def render() -> None:
     # ⭐ 方案B：本地触发后再提交订单到交易所
     # =========================
     use_local_trigger = st.toggle("本地触发后再提交到交易所", value=False)
+    
     local_trigger_price = None
     local_trigger_immediate = False
+    local_trigger_condition: Optional[str] = None
+
     if use_local_trigger:
         lt1, lt2 = st.columns([1, 1])
         with lt1:
-            local_trigger_price = st.number_input("本地触发价(localTriggerPrice)", min_value=0.0, value=0.0, step=0.01, format="%.6f")
+            local_trigger_price = st.number_input(
+                "本地触发价(localTriggerPrice)",
+                min_value=0.0,
+                value=0.0,
+                step=0.01,
+                format="%.6f"
+            )
         with lt2:
             local_trigger_immediate = st.toggle("立即触发（直接提交到交易所）", value=False)
+
+        # ✅ 新增：本地触发条件 gte / lte
+        # 默认策略：
+        # 1) 优先用 “触发价 vs 当前价(mark/last)” 来推断：触发价在上方 => gte；在下方 => lte
+        # 2) 推断失败则退化为：long => gte, short => lte
+        default_cond = "gte" if order_side == "long" else "lte"
+        try:
+            cur = None
+            if mark and float(mark) > 0:
+                cur = float(mark)
+            elif last_price and float(last_price) > 0:
+                cur = float(last_price)
+            if cur is not None and float(local_trigger_price) > 0:
+                default_cond = "gte" if float(local_trigger_price) >= cur else "lte"
+        except Exception:
+            pass
+
+        local_trigger_condition = st.selectbox(
+            "本地触发条件(localTriggerCondition)",
+            options=["gte", "lte"],
+            index=0 if default_cond == "gte" else 1,
+            help="gte: 当前价>=触发价触发；lte: 当前价<=触发价触发"
+        )
+        
         st.caption("说明：关闭\"立即触发\"时，会先在本地轮询价格，满足本地触发价后才把订单提交到交易所。")
 
     pcol1, pcol2, pcol3 = st.columns([1, 1, 2])
@@ -386,6 +422,9 @@ def render() -> None:
                         raise ValueError("开启本地触发时，localTriggerPrice 必须 > 0")
                     params["localTriggerPrice"] = float(local_trigger_price)
                     params["localTriggerImmediate"] = bool(local_trigger_immediate)
+                    # ✅ 透传 gte/lte 到后端 create_order
+                    if local_trigger_condition in ("gte", "lte"):
+                        params["localTriggerCondition"] = local_trigger_condition
 
                 if auto_protection:
                     if enable_tp and tp_price and tp_price > 0:

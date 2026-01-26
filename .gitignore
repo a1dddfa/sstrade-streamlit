@@ -45,3 +45,8 @@ coverage/
 *.tmp
 *.temp
 .cache/
+
+# Local trigger orders
+pending_local_trigger_orders.json
+pending_deferred_stop_limits.json
+pending_stop_losses.json
