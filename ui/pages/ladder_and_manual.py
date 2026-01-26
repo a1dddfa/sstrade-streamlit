@@ -300,7 +300,9 @@ def render() -> None:
     # mark price (hint only)
     mark = None
     try:
-        t = exchange.get_ticker(sym2) or {}
+        # ✅ UI 只想"展示参考价"，不要把 symbol 注册进 ticker watchlist
+        # get_ticker() 在开启 watch 模式时会 add_watch_symbol()，导致 ETHUSDT 这类默认值被持续轮询
+        t = exchange.fetch_ticker(sym2) or {}
         mark = float(t.get("lastPrice") or t.get("markPrice") or 0.0) or None
     except Exception:
         mark = None

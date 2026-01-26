@@ -285,7 +285,15 @@ class PersistenceMixin:
             for v in (self._pending_deferred_stop_limits or {}).values():
                 if v.get("symbol"):
                     symbols.add(v["symbol"])
+            # ✅ 只轮询"待触发"的本地触发单（triggerStatus == PENDING）
+            # 历史记录（TRIGGERED/FAILED/CANCELLED...）不应再驱动行情拉取
             for v in (self._pending_local_trigger_orders or {}).values():
+                try:
+                    st = str(v.get("triggerStatus") or "").upper()
+                except Exception:
+                    st = ""
+                if st != "PENDING":
+                    continue
                 if v.get("symbol"):
                     symbols.add(v["symbol"])
         for sym in symbols:
