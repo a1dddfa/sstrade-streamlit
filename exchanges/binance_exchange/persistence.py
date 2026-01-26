@@ -53,13 +53,56 @@ class PersistenceMixin:
             logger.warning(f"[PENDING_LTR] save failed, ignore: {e}", exc_info=True)
 
     def get_pending_local_trigger_orders(self):
-        """给 UI 用：返回当前待触发的本地触发订单列表。"""
+        """
+        给 UI 用：返回当前"还活跃/待触发"的本地触发订单列表。
+        只返回 triggerStatus == PENDING 的条目。
+        """
         out = []
         with self._ws_lock:
             for k, v in (self._pending_local_trigger_orders or {}).items():
+                try:
+                    st = str(v.get("triggerStatus") or "").upper()
+                except Exception:
+                    st = ""
+                if st != "PENDING":
+                    continue
                 row = dict(v)
                 row.setdefault("id", k)
                 out.append(row)
+        return out
+
+    def get_local_trigger_order_history(self):
+        """
+        给 UI 或后续功能用：返回已结束的本地触发订单历史列表。
+        返回 triggerStatus != PENDING 的条目，并按时间倒序排序。
+        """
+        out = []
+        with self._ws_lock:
+            for k, v in (self._pending_local_trigger_orders or {}).items():
+                try:
+                    st = str(v.get("triggerStatus") or "").upper()
+                except Exception:
+                    st = ""
+                if st == "PENDING":
+                    continue
+                row = dict(v)
+                row.setdefault("id", k)
+                out.append(row)
+        # 按时间倒序排序：优先用 triggeredTs，其次用 createdTs
+        def get_sort_key(item):
+            try:
+                # 优先用触发时间
+                ts = item.get("triggeredTs")
+                if ts:
+                    return -ts
+                # 其次用创建时间
+                ts = item.get("createdTs")
+                if ts:
+                    return -ts
+            except Exception:
+                pass
+            return 0
+        out.sort(key=get_sort_key)
         return out
 
     def cancel_local_trigger_order(self, oid: str) -> bool:

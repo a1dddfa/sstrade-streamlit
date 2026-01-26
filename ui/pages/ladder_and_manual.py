@@ -600,13 +600,26 @@ def render() -> None:
     st.markdown("### 🧷 本地触发挂单状态（local-trigger）")
     st.caption("用于观察：是否触发、触发后提交是否成功、以及提交回执")
 
+    c1, c2 = st.columns([1, 4])
+    with c1:
+        if st.button("🧹 清除已结束", key="ltr_clear_finished"):
+            try:
+                n = exchange.clear_finished_local_trigger_orders()
+                st.success(f"已清除 {n} 条已结束的本地触发单")
+                st.rerun()
+            except Exception as e:
+                st.error(f"清除失败：{e}")
+
+    # -----------------------------    # Pending 区：活跃订单    # -----------------------------    
+    st.markdown("#### 🟡 待触发（仅展示 PENDING）")
+    st.caption("仅支持取消 triggerStatus=PENDING 的条目（取消后不会再被轮询触发）。")
+
     try:
-        ltr = exchange.get_pending_local_trigger_orders() or []
-        if not ltr:
-            st.info("暂无本地触发挂单")
+        pending = exchange.get_pending_local_trigger_orders() or []
+        if not pending:
+            st.info("暂无待触发的本地触发挂单")
         else:
-            st.caption("仅支持取消 triggerStatus=PENDING 的条目（取消后不会再被轮询触发）。")
-            for r in ltr:
+            for r in pending:
                 oid = r.get("id")
                 c1, c2, c3, c4, c5, c6 = st.columns([2.6, 1.2, 1.6, 1.6, 3.0, 1.0])
                 with c1:
@@ -630,7 +643,32 @@ def render() -> None:
                         else:
                             st.warning(f"取消失败/不存在：{oid}")
     except Exception as e:
-        st.warning(f"获取本地触发订单状态失败：{e}")
+        st.warning(f"获取待触发订单失败：{e}")
+
+    # -----------------------------    # History 区：已结束订单    # -----------------------------    
+    with st.expander("📋 历史记录（已结束）", expanded=False):
+        try:
+            history = exchange.get_local_trigger_order_history() or []
+            if not history:
+                st.info("暂无已结束的本地触发挂单历史")
+            else:
+                st.caption("已结束的本地触发挂单记录，按时间倒序排序。")
+                for r in history:
+                    oid = r.get("id")
+                    c1, c2, c3, c4, c5 = st.columns([2.6, 1.2, 1.6, 1.6, 3.0])
+                    with c1:
+                        st.write(oid)
+                    with c2:
+                        st.write(r.get("symbol"))
+                    with c3:
+                        st.write(f'{r.get("activateCondition")} {r.get("activatePrice")}')
+                    with c4:
+                        st.write(f'{r.get("triggerStatus")} / {r.get("triggerResult")}')
+                    with c5:
+                        err = r.get("triggerError") or r.get("orderError")
+                        st.write(err if err else "")
+        except Exception as e:
+            st.warning(f"获取历史订单失败：{e}")
 
     st.divider()
     st.markdown("### 🧷 阶梯运行状态")
