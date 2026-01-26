@@ -274,8 +274,9 @@ class EthUSDCGridStrategy(BaseStrategy):
         self.logger.info(f"初始化 {self.symbol} 策略")
         self.symbol_trackers[self.symbol] = SymbolTracker(self.symbol)
         self._init_level_1_orders()
-        # ⭐ 启动行情 WebSocket：用 WS 行情更新 exchange 的缓存，避免 get_ticker REST 轮询
-        if not self._ws_ticker_started:
+        # ✅ 只轮询：如果全局禁用 WS，就不要订阅（行情由 TickerWatchPoller 每分钟更新缓存提供）
+        use_ws = bool((getattr(self.exchange, "global_config", {}) or {}).get("use_ws", False))
+        if use_ws and (not self._ws_ticker_started):
             try:
                 self.exchange.ws_subscribe_ticker(self.pair, self._on_ws_ticker)
                 self._ws_ticker_started = True
