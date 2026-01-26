@@ -18,6 +18,74 @@ class MarketDataMixin:
         self._last_ticker_fetch_ts: dict[str, float] = {}
         self._last_ticker_cache: dict[str, dict] = {}
 
+        # =========================
+        # ⭐ Ticker watchlist: 集中轮询 + 全局缓存（只轮询"正在监控"的交易对）
+        # =========================
+        gc = getattr(self, "global_config", {}) or {}
+        # 默认开启：把 REST 行情从"每处调用点触发"收敛为"单线程统一触发"
+        self._ticker_watch_enabled: bool = bool(gc.get("enable_ticker_watch_polling", True))
+        # 默认 60 秒轮询一次（你想要的"一分钟一次"）
+        self._ticker_watch_interval_sec: float = float(gc.get("ticker_watch_poll_interval_sec", 60.0))
+        # 启动阶段允许在"无缓存"时做一次 bootstrap REST（避免首次取价全是 None）
+        self._ticker_watch_allow_bootstrap: bool = bool(gc.get("ticker_watch_allow_bootstrap", True))
+
+        self._ticker_watch_lock = threading.RLock()
+        self._ticker_watchlist: set[str] = set()  # 保存 format 后的 symbol，例如 "ETHUSDT"
+        self._ticker_watch_stop = threading.Event()
+        self._ticker_watch_thread: Optional[threading.Thread] = None
+
+        if self._ticker_watch_enabled and (not getattr(self, "dry_run", False)):
+            self._start_ticker_watch_polling_thread()
+
+    def add_watch_symbol(self, symbol: str) -> None:
+        """加入监控集合：后续由集中轮询线程负责更新缓存。"""
+        sym = self._format_symbol(symbol)
+        with self._ticker_watch_lock:
+            self._ticker_watchlist.add(sym)
+
+    def remove_watch_symbol(self, symbol: str) -> None:
+        sym = self._format_symbol(symbol)
+        with self._ticker_watch_lock:
+            self._ticker_watchlist.discard(sym)
+
+    def _start_ticker_watch_polling_thread(self) -> None:
+        if self._ticker_watch_thread is not None:
+            return
+
+        interval = max(1.0, float(self._ticker_watch_interval_sec))
+
+        def _run():
+            logger.info(f"[TICKER_WATCH] polling thread started, interval={interval}s")
+            while not self._ticker_watch_stop.is_set():
+                try:
+                    self._poll_watchlist_once()
+                except Exception:
+                    logger.warning("[TICKER_WATCH] poll tick failed", exc_info=True)
+                try:
+                    time.sleep(interval)
+                except Exception:
+                    pass
+            logger.info("[TICKER_WATCH] polling thread stopped")
+
+        th = threading.Thread(target=_run, name="TickerWatchPoller", daemon=True)
+        th.start()
+        self._ticker_watch_thread = th
+
+    def _poll_watchlist_once(self) -> None:
+        # 快照：避免遍历时被修改
+        with self._ticker_watch_lock:
+            symbols = list(self._ticker_watchlist)
+        if not symbols:
+            return
+
+        # 只对 watchlist 执行 REST 拉取；fetch_ticker 成功后会写入 self._last_ticker / self._last_ticker_ts
+        for sym_fmt in symbols:
+            try:
+                self.fetch_ticker(sym_fmt)
+            except Exception:
+                # fetch_ticker 内部已有 rate-limit / 缓存回退逻辑，外层不再刷屏
+                pass
+
     def fetch_ticker(self, symbol: str):
         """
         从REST API获取行情信息
@@ -102,9 +170,38 @@ class MarketDataMixin:
             raise RuntimeError(f"无法获取 {symbol_fmt} 的真实行情")
 
     def get_ticker(self, symbol: str):
-        sym = str(symbol).replace("/", "").upper()
+        sym_fmt = self._format_symbol(symbol)
 
-        # 纯轮询：做一个最小间隔缓存，避免 1 秒内重复打 REST
+        # ✅ 方案：集中轮询开启时
+        # - get_ticker 只负责“注册监控 + 读缓存”
+        # - REST 由后台 TickerWatchPoller 每分钟统一触发
+        if getattr(self, "_ticker_watch_enabled", False):
+            try:
+                self.add_watch_symbol(sym_fmt)
+            except Exception:
+                pass
+
+            cached = None
+            try:
+                cached = (getattr(self, "_last_ticker", {}) or {}).get(sym_fmt)
+            except Exception:
+                cached = None
+
+            if cached is not None:
+                return cached
+
+            # bootstrap：首次无缓存时，允许打一枪 REST（避免上层全是 None）
+            if bool(getattr(self, "_ticker_watch_allow_bootstrap", True)):
+                try:
+                    return self.fetch_ticker(sym_fmt)
+                except Exception:
+                    return cached
+
+            # 不允许 bootstrap 的情况下，直接返回 None（由上层决定是否等待下一轮轮询）
+            return cached
+
+        # ❗ fallback：集中轮询未开启时，保留原本的“最小间隔缓存 + 直接走 REST”的行为
+        sym = str(symbol).replace("/", "").upper()
         now = time.time()
         min_interval = float(getattr(self, "_rest_ticker_min_interval", 0.8))
         last_ts = float(self._last_ticker_fetch_ts.get(sym, 0.0))

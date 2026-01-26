@@ -204,6 +204,13 @@ class CoreBinanceExchange(BaseExchange):
         except Exception:
             pass
 
+        # ✅ 停止 ticker watch 轮询线程（如果启用）
+        try:
+            if getattr(self, "_ticker_watch_stop", None):
+                self._ticker_watch_stop.set()
+        except Exception:
+            pass
+
     def _init_client(self):
         """
         初始化币安客户端

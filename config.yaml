@@ -13,6 +13,10 @@ global:
   enable_local_trigger_polling: true
   local_trigger_poll_interval_sec: 0.5
   pending_local_trigger_path: pending_local_trigger_orders.json
+  # 行情轮询设置
+  enable_ticker_watch_polling: true
+  ticker_watch_poll_interval_sec: 60
+  ticker_watch_allow_bootstrap: true
 
 # 交易所配置
 exchanges:
