@@ -26,5 +26,36 @@
     "submittedTs": 1769349193278,
     "triggerError": "BinanceAPIException(<Response [400]>, 400, '{\"code\":-4183,\"msg\":\"Limit price can\\'t be higher than 0.1494999\"}')",
     "orderError": "BinanceAPIException(<Response [400]>, 400, '{\"code\":-4183,\"msg\":\"Limit price can\\'t be higher than 0.1494999\"}')"
+  },
+  "MANUAL_UI_1769421245862_b411972e": {
+    "symbol": "BRUSDT",
+    "activatePrice": 0.05512,
+    "activateCondition": "gte",
+    "orderRequest": {
+      "symbol": "BRUSDT",
+      "side": "long",
+      "order_type": "take_profit_limit",
+      "quantity": 84.0,
+      "price": 0.058,
+      "params": {
+        "timeInForce": "GTC",
+        "tag": "MANUAL_UI",
+        "positionSide": "LONG",
+        "stopPrice": 0.058,
+        "_skip_local_trigger": true
+      }
+    },
+    "tag": "MANUAL_UI",
+    "createdTs": 1769421245862,
+    "triggerStatus": "TRIGGERED",
+    "triggerResult": "FAILED",
+    "triggerError": "BinanceAPIException(<Response [400]>, 400, '{\"code\":-1116,\"msg\":\"Invalid orderType.\"}')",
+    "triggeredTs": 1769421253146,
+    "orderStatus": "FAILED",
+    "orderError": "BinanceAPIException(<Response [400]>, 400, '{\"code\":-1116,\"msg\":\"Invalid orderType.\"}')",
+    "orderResult": null,
+    "orderId": null,
+    "clientOrderId": null,
+    "submittedTs": 1769421253146
   }
 }

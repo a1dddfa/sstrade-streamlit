@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any, Dict, List, Optional
 
+import math
 import time
 import pandas as pd
 import streamlit as st
@@ -524,11 +525,118 @@ def render() -> None:
                 "方向(positionSide)": p.get("positionSide"),
                 "数量(positionAmt)": p.get("positionAmt"),
                 "开仓均价(entryPrice)": p.get("entryPrice"),
+                "保本价(breakEvenPrice)": p.get("breakEvenPrice"),
                 "未实现盈亏(UPnL)": p.get("unrealizedProfit"),
                 "强平价(liqPrice)": p.get("liquidationPrice"),
                 "杠杆(leverage)": p.get("leverage"),
             })
         st.dataframe(pd.DataFrame(rows), use_container_width=True, height=220)
+
+        # ==========================================================
+        # BEP 距离触发止盈（UI + 价格计算）
+        # ==========================================================
+        with st.expander("🧷 一次性：BEP 距离触发止盈（StopLimit，本地触发）", expanded=False):
+            nonzero = []
+            for p in pos:
+                if not isinstance(p, dict):
+                    continue
+                try:
+                    amt = float(p.get("positionAmt") or 0.0)
+                except Exception:
+                    amt = 0.0
+                if abs(amt) <= 0:
+                    continue
+                nonzero.append(p)
+
+            if not nonzero:
+                st.info("暂无非零仓位")
+            else:
+                def _label(p: Dict[str, Any]) -> str:
+                    ps = str(p.get("positionSide") or "BOTH")
+                    amt = float(p.get("positionAmt") or 0.0)
+                    bep = float(p.get("breakEvenPrice") or 0.0)
+                    return f"{ps} | amt={amt} | bep={bep}"
+
+                labels = [_label(p) for p in nonzero]
+                pick = st.selectbox(
+                    "选择仓位（positionSide）",
+                    options=list(range(len(nonzero))),
+                    format_func=lambda i: labels[i],
+                )
+                p0 = nonzero[int(pick)]
+
+                amt0 = float(p0.get("positionAmt") or 0.0)
+                qty_abs = abs(amt0)
+                bep0 = float(p0.get("breakEvenPrice") or p0.get("entryPrice") or 0.0)
+
+                cA, cB = st.columns(2)
+                with cA:
+                    be_trigger_distance = st.number_input(
+                        "触发距离 D（绝对价格）",
+                        min_value=0.0,
+                        value=0.0,
+                        step=0.1,
+                        format="%.6f",
+                    )
+                with cB:
+                    be_profit_pct = st.number_input(
+                        "BEP 盈利偏移（默认 0.001）",
+                        min_value=0.0,
+                        value=0.001,
+                        step=0.0001,
+                        format="%.6f",
+                    )
+
+                if bep0 > 0 and qty_abs > 0 and be_trigger_distance > 0:
+                    is_long = amt0 > 0
+                    if is_long:
+                        local_trigger_price = bep0 + be_trigger_distance
+                        be_price = bep0 * (1 + be_profit_pct)
+                        close_side = "short"
+                    else:
+                        local_trigger_price = bep0 - be_trigger_distance
+                        be_price = bep0 * (1 - be_profit_pct)
+                        close_side = "long"
+
+                    st.caption(
+                        f"预览：localTrigger={local_trigger_price:.6f}, "
+                        f"stop/limit={be_price:.6f}, side={close_side}, qty={qty_abs}"
+                    )
+
+                    be_tag = st.text_input(
+                        "tag（可选）",
+                        value="MANUAL_BEP_PROFIT_ONCE",
+                    )
+
+                    valid = bep0 > 0 and qty_abs > 0 and be_trigger_distance > 0
+                    if st.button(
+                        "🧷 创建一次性 BEP 距离触发止盈（StopLimit）",
+                        disabled=not valid,
+                    ):
+                        try:
+                            o = exchange.create_order(
+                                symbol=sym_fmt,
+                                side=close_side,
+                                order_type="stop_limit",
+                                quantity=float(qty_abs),
+                                price=float(be_price),
+                                params={
+                                    "reduceOnly": True,
+                                    "timeInForce": "GTC",
+                                    "stopPrice": float(be_price),
+                                    "tag": be_tag,
+
+                                    # 本地触发
+                                    "localTriggerPrice": float(local_trigger_price),
+                                    "localTriggerImmediate": False,
+                                    "localTriggerCondition": "gte" if amt0 > 0 else "lte",
+                                },
+                            )
+                            st.success(f"已创建本地触发止盈单：{o}")
+                            ui_logger.log(f"🧷 BEP 距离触发止盈创建成功：{o}")
+                        except Exception as e:
+                            st.error(f"创建失败：{e}")
+                            ui_logger.log(f"❌ BEP 距离触发止盈失败：{e}")
     except Exception as e:
         st.warning(f"获取仓位失败：{e}")
 

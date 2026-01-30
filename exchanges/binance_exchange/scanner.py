@@ -266,8 +266,8 @@ class ScannerMixin:
         - short_wick = min(upper, lower)
 
         条件：
-        1) (body + short_wick) < range / 3
-        2) long_wick > 2 * range / 3
+        1) (body + short_wick) < range / 4
+        2) long_wick > 3 * range / 4
 
         返回：
             pattern: "HAMMER" | "INVERTED_HAMMER"
@@ -298,10 +298,10 @@ class ScannerMixin:
         long_wick = max(upper, lower)
         short_wick = min(upper, lower)
 
-        # ✅ 新规则：实体+短影线 < 1/3，总长影线 > 2/3
-        if (body + short_wick) >= (rng / 3.0):
+        # ✅ 新规则：实体+短影线 < 1/4，总长影线 > 3/4
+        if (body + short_wick) >= (rng / 4.0):
             return None
-        if long_wick <= (2.0 * rng / 3.0):
+        if long_wick <= (3.0 * rng / 4.0):
             return None
 
         pattern = "HAMMER" if lower >= upper else "INVERTED_HAMMER"

@@ -39,7 +39,7 @@ class RangeTwoConfig:
     second_entry_offset_pct: float = 0.01   # 1% => 0.01
     be_offset_pct: float = 0.001            # 0.1% => 0.001
     enable_be_order: bool = False           # ✅ 是否启用“保本 BE 单”(STOP_LIMIT)，默认关闭
-    tick_interval_sec: float = 1.0
+    tick_interval_sec: float = 10.0
     tag_prefix: str = "UI_RANGE2"
 
 
