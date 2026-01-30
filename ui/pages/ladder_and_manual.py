@@ -553,10 +553,11 @@ def render() -> None:
                 st.info("暂无非零仓位")
             else:
                 def _label(p: Dict[str, Any]) -> str:
+                    sym = str(p.get("symbol") or "UNKNOWN")
                     ps = str(p.get("positionSide") or "BOTH")
                     amt = float(p.get("positionAmt") or 0.0)
                     bep = float(p.get("breakEvenPrice") or 0.0)
-                    return f"{ps} | amt={amt} | bep={bep}"
+                    return f"{sym} ({ps}) | 数量={amt} | 保本价={bep}"
 
                 labels = [_label(p) for p in nonzero]
                 pick = st.selectbox(
@@ -610,6 +611,9 @@ def render() -> None:
                     )
 
                     valid = bep0 > 0 and qty_abs > 0 and be_trigger_distance > 0
+                    if not valid:
+                        st.warning("请填写『触发距离 D』（必须大于 0）以启用下单按钮")
+
                     if st.button(
                         "🧷 创建一次性 BEP 距离触发止盈（StopLimit）",
                         disabled=not valid,
