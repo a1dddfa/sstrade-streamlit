@@ -79,6 +79,7 @@ class RangeTwoState:
     # ✅ 全局 BE 单（以“当前仓位损益两平价(BEP)”为基准）
     be_order_id: Optional[str] = None   # 已挂出的 BE 保护单 orderId（用于撤旧换新）
     last_bep: Optional[float] = None    # 上一次计算的 BEP（用于检测 A2 成交后均价变化）
+    last_legs: Optional[int] = None     # 上一次腿数(1/2)，用于腿数变化时撤旧换新
 
     # 防抖：避免在网络抖动/下单失败时，每个 tick 都重复补挂 TP/SL
     last_protect_attempt_ts1: float = 0.0
@@ -161,6 +162,7 @@ class RangeTwoBot(BotBase, TickerSubscriptionMixin):
         self.state.last_error = None
         self.state.be_order_id = None
         self.state.last_bep = None
+        self.state.last_legs = None
 
 
     def _ensure_ticker_ws(self, symbol: str):
@@ -521,6 +523,83 @@ class RangeTwoBot(BotBase, TickerSubscriptionMixin):
 
         return 0.0
 
+    def _get_exchange_bep(self, symbol: str, side: str) -> Optional[float]:
+        """
+        从交易所持仓中获取 breakEvenPrice（不存在则回退 entryPrice）
+        """
+        sym = str(symbol).replace("/", "").upper()
+        want_ps = "LONG" if side == "long" else "SHORT"
+
+        try:
+            pos_list = self.exchange.get_positions(sym) or []
+        except Exception:
+            pos_list = []
+
+        candidates = []
+        for p in pos_list:
+            s = str(p.get("symbol") or "").replace("/", "").upper()
+            if s != sym:
+                continue
+
+            ps = str(p.get("positionSide") or "").upper()
+            try:
+                amt = float(p.get("positionAmt") or 0.0)
+            except Exception:
+                amt = 0.0
+            if abs(amt) <= 0:
+                continue
+
+            if ps == want_ps or ps == "BOTH" or ps == "":
+                candidates.append(p)
+
+        if not candidates:
+            return None
+
+        raw = candidates[0].get("breakEvenPrice") or candidates[0].get("entryPrice")
+        try:
+            bep = float(raw or 0.0)
+        except Exception:
+            bep = 0.0
+
+        return bep if bep > 0 else None
+
+    def _cancel_old_protect_orders(
+        self,
+        symbol: str,
+        position_side: str,
+        keep_order_id: Optional[str] = None,
+    ) -> None:
+        """
+        取消旧的 STOP / STOP_MARKET / TRAILING_STOP 保护单（不含 TP LIMIT）
+        """
+        try:
+            open_orders = self.exchange.get_open_orders(symbol) or []
+        except Exception:
+            open_orders = []
+
+        protect_types = {"STOP", "STOP_MARKET", "TRAILING_STOP_MARKET"}
+        for o in open_orders:
+            try:
+                oid = str(o.get("orderId") or "")
+                if keep_order_id and oid == str(keep_order_id):
+                    continue
+
+                ps = str(o.get("positionSide") or "").upper()
+                if ps and ps != position_side:
+                    continue
+
+                typ = str(o.get("type") or "").upper()
+                if typ not in protect_types:
+                    continue
+
+                if not (o.get("reduceOnly") or o.get("closePosition")):
+                    continue
+
+                self.exchange.cancel_order(symbol=symbol, order_id=oid)
+                self.log.log(f"🧹 已撤销旧保护单: type={typ} order_id={oid}")
+            except Exception as e:
+                self.log.log(f"⚠️ 撤销旧保护单失败(忽略): {e}")
+
 
     def _calc_current_bep(self, cfg: "RangeTwoConfig") -> Optional[float]:
         s = self.state
@@ -800,81 +879,86 @@ class RangeTwoBot(BotBase, TickerSubscriptionMixin):
                 self._ensure_tp_sl_if_needed()
 
                 # =========================
-                # ✅ 新 BE 逻辑（按“当前损益两平价(BEP)”动态计算）
-                # 触发：达到 BEP 再多走 diff/4
+                # ✅ 新 BE 逻辑（基于交易所 breakEvenPrice）
+                # 触发：达到 BEP 再多走 diff/4 * legs
                 # 下单：在 BEP 往有利方向 0.1%(千分之一) 挂 STOP_LIMIT
-                # 且：A2 成交导致 BEP 变化时，撤掉旧 BE 单并按新 BEP 重挂
+                # 且：BEP 变化或腿数变化时，撤掉旧 BE 单并按新参数重挂
                 # 数量：使用“当前真实仓位量”的绝对值
                 # =========================
 
-                bep = self._calc_current_bep(cfg)
-                if bep is not None and bep > 0 and d > 0:
+                bep = self._get_exchange_bep(cfg.symbol, cfg.side)
+
+                with self._lock:
+                    legs = int(bool(self.state.a1_filled)) + int(bool(self.state.a2_filled))
+
+                if bep is not None and bep > 0 and d > 0 and legs > 0:
+                    profit_step = float(d) / 4.0 * float(legs)
+
                     if cfg.side == "long":
-                        trigger = float(bep) + float(d) / 4.0
-                        be_price = float(bep) * (1.0 + float(cfg.be_offset_pct))  # 0.001 => +0.1%
-                        ok = (mark >= trigger)
+                        trigger = bep + profit_step
+                        be_price = bep * (1.0 + cfg.be_offset_pct)
+                        ok = mark >= trigger
                         pos_side = "LONG"
                         stop_side = "short"
                     else:
-                        trigger = float(bep) - float(d) / 4.0
-                        be_price = float(bep) * (1.0 - float(cfg.be_offset_pct))  # 0.001 => -0.1%
-                        ok = (mark <= trigger)
+                        trigger = bep - profit_step
+                        be_price = bep * (1.0 - cfg.be_offset_pct)
+                        ok = mark <= trigger
                         pos_side = "SHORT"
                         stop_side = "long"
-                    
-                    # [DEBUG] 只有在还没挂 BE 单时才打印调试信息，避免刷屏
-                    if not self.state.be_order_id:
-                        debug_qty = float(self._get_abs_position_qty(cfg.symbol, side=cfg.side))
-                        # 为了避免日志爆炸，仅当价格接近触发价(例如 差距 < 0.5% diff) 或 已经满足 ok 时才打印
-                        dist_ratio = abs(mark - trigger) / d
-                        if ok or dist_ratio < 0.1: 
-                            self.log.log(
-                                f"🔍 BE DEBUG: Mark={mark:.4f} Trigger={trigger:.4f} OK={ok} "
-                                f"BEP={bep:.4f} Qty={debug_qty:.6f} PosSide={pos_side}"
-                            )
 
-                    # --- 如果 BEP 变化且已经挂过 BE 单：撤旧换新 ---
-                    if self.state.be_order_id and self.state.last_bep:
-                        rel = abs(float(bep) - float(self.state.last_bep)) / float(self.state.last_bep)
-                        if rel > 1e-6:
-                            try:
-                                self.exchange.cancel_order(
-                                    symbol=cfg.symbol,
-                                    order_id=str(self.state.be_order_id),
-                                )
-                                self.log.log(
-                                    f"♻️ BEP 变化，撤旧 BE：order_id={self.state.be_order_id} "
-                                    f"old_bep={self.state.last_bep:.6f} new_bep={float(bep):.6f}"
-                                )
-                            except Exception as e:
-                                self.log.log(f"⚠️ 撤旧 BE 单失败(忽略)：{e}")
-                            finally:
-                                self.state.be_order_id = None
+                    need_refresh = False
+                    with self._lock:
+                        if self.state.be_order_id is None:
+                            need_refresh = True
+                        elif self.state.last_bep is None:
+                            need_refresh = True
+                        else:
+                            rel = abs(bep - self.state.last_bep) / max(1e-12, self.state.last_bep)
+                            if rel > 1e-6:
+                                need_refresh = True
 
-                    # 更新 last_bep
-                    self.state.last_bep = float(bep)
+                        if self.state.last_legs != legs:
+                            need_refresh = True
 
-                    # --- 触发后挂 BE 单（若尚未挂）---
-                    if ok and (not self.state.be_order_id):
+                        self.state.last_bep = bep
+                        self.state.last_legs = legs
+
+                    if ok and need_refresh:
                         qty_abs = float(self._get_abs_position_qty(cfg.symbol, side=cfg.side))
                         if qty_abs > 0:
+                            old_oid = self.state.be_order_id
+
                             try:
                                 o = self._place_close_stop_limit(
                                     cfg.symbol,
                                     stop_side,
-                                    qty_abs,           # ✅ 用真实仓位量绝对值
-                                    float(be_price),   # stop
-                                    float(be_price),   # limit
+                                    qty_abs,
+                                    be_price,
+                                    be_price,
                                     pos_side,
                                     f"MANUAL_{cfg.tag_prefix}_BE_STOPLIMIT",
                                 )
-                                oid = (o or {}).get("orderId") if isinstance(o, dict) else None
-                                self.state.be_order_id = str(oid) if oid else None
+                                new_oid = str((o or {}).get("orderId") or "")
+                                self.state.be_order_id = new_oid
+
+                                if old_oid and old_oid != new_oid:
+                                    try:
+                                        self.exchange.cancel_order(cfg.symbol, old_oid)
+                                        self.log.log(f"♻️ 腿数/BEP 变化，撤旧 BE：order_id={old_oid}")
+                                    except Exception as e:
+                                        self.log.log(f"⚠️ 撤旧 BE 单失败(忽略)：{e}")
+
+                                self._cancel_old_protect_orders(
+                                    symbol=cfg.symbol,
+                                    position_side=pos_side,
+                                    keep_order_id=new_oid,
+                                )
 
                                 self.log.log(
-                                    f"🧷 BE 已挂 STOP_LIMIT：trigger={float(trigger):.6f} "
-                                    f"bep={float(bep):.6f} be_price={float(be_price):.6f} qty={qty_abs:.6f} "
-                                    f"order_id={self.state.be_order_id}"
+                                    f"🧷 BE 已挂 STOP_LIMIT：trigger={trigger:.6f} "
+                                    f"bep={bep:.6f} be_price={be_price:.6f} qty={qty_abs:.6f} "
+                                    f"legs={legs} order_id={new_oid}"
                                 )
                             except Exception as e:
                                 self.log.log(f"❌ BE 下单失败: {e}")
