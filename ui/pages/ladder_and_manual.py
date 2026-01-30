@@ -509,7 +509,8 @@ def render() -> None:
 
     try:
         sym_fmt = sym2.strip().upper().replace("/", "")
-        pos = exchange.get_positions(sym_fmt) or []
+        # 修改：传入 None 以获取所有交易对的持仓，避免被上方手动下单的交易对过滤
+        pos = exchange.get_positions(None) or []
         rows = []
         for p in pos:
             if not isinstance(p, dict):
@@ -615,7 +616,8 @@ def render() -> None:
                     ):
                         try:
                             o = exchange.create_order(
-                                symbol=sym_fmt,
+                                # 修改：使用所选仓位实际的交易对，而不是手动下单区的 sym_fmt
+                                symbol=p0.get("symbol", sym_fmt),
                                 side=close_side,
                                 order_type="stop_limit",
                                 quantity=float(qty_abs),
