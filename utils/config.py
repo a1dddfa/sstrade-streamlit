@@ -16,9 +16,15 @@ def load_config(cfg: dict):
         binance_cfg.get("api_secret", "")
     )
 
+    # -------- Proxy configuration (global fallback) --------
+    global_proxy = os.getenv(
+        "GLOBAL_PROXY",
+        global_cfg.get("proxy")
+    )
+
     proxy = os.getenv(
         "BINANCE_PROXY",
-        binance_cfg.get("proxy")
+        binance_cfg.get("proxy", global_proxy)
     )
 
     # -------- WebSocket switch --------
