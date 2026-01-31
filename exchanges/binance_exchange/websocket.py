@@ -341,10 +341,10 @@ class WebsocketMixin:
                 except Exception as e:
                     last_err = e
                     self._user_stream_fail_count += 1
-                    logger.error(
-                        f"[USER_STREAM] subscribe failed attempt={attempt}/{max_retries}: {e}",
-                        exc_info=True
-                    )
+                    if attempt < max_retries:
+                        logger.warning(f"[USER_STREAM] subscribe retry {attempt}/{max_retries}: {e}")
+                    else:
+                        logger.error(f"[USER_STREAM] subscribe failed attempt={attempt}/{max_retries}: {e}", exc_info=True)
                     time.sleep(retry_sleep)
 
             # 连续失败：进入降级模式（降低 positions/balance/open_orders 的 REST 频率）
