@@ -1,28 +1,32 @@
 import os
 
 def load_config(cfg: dict):
-    # ---- Binance credentials ----
+    # -------- safe access (关键修复点) --------
+    binance_cfg = cfg.get("binance", {}) or {}
+    global_cfg = cfg.get("global", {}) or {}
+
+    # -------- Binance credentials (env 优先) --------
     api_key = os.getenv(
         "BINANCE_API_KEY",
-        cfg["binance"].get("api_key", "")
+        binance_cfg.get("api_key", "")
     )
 
     api_secret = os.getenv(
         "BINANCE_API_SECRET",
-        cfg["binance"].get("api_secret", "")
+        binance_cfg.get("api_secret", "")
     )
 
     proxy = os.getenv(
         "BINANCE_PROXY",
-        cfg["binance"].get("proxy")
+        binance_cfg.get("proxy")
     )
 
-    # ---- WebSocket switch ----
+    # -------- WebSocket switch --------
     use_ws_env = os.getenv("USE_WS")
     if use_ws_env is not None:
         use_ws = use_ws_env.lower() in ("1", "true", "yes", "on")
     else:
-        use_ws = cfg["global"].get("use_ws", False)
+        use_ws = global_cfg.get("use_ws", False)
 
     return {
         "api_key": api_key,

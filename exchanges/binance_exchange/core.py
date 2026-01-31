@@ -257,7 +257,6 @@ class CoreBinanceExchange(BaseExchange):
             kwargs = {
                 "api_key": self.api_key,
                 "api_secret": self.api_secret,
-                "testnet": self.testnet,
             }
 
             if self.proxy:
