@@ -262,10 +262,13 @@ class CoreBinanceExchange(BaseExchange):
             if self.proxy:
                 kwargs["https_proxy"] = self.proxy
 
-            # 防止 python-binance 5s 超时
-            kwargs["socket_connect_timeout"] = 15
-
-            self.ws_manager = ThreadedWebsocketManager(**kwargs)
+            # 兼容不同 python-binance 版本：新版本支持就用，不支持就回退
+            try:
+                kwargs["socket_connect_timeout"] = 15
+                self.ws_manager = ThreadedWebsocketManager(**kwargs)
+            except TypeError:
+                kwargs.pop("socket_connect_timeout", None)
+                self.ws_manager = ThreadedWebsocketManager(**kwargs)
             
             # 启动WebSocket管理器
             self.ws_manager.start()

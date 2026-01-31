@@ -57,5 +57,101 @@
     "orderId": null,
     "clientOrderId": null,
     "submittedTs": 1769421253146
+  },
+  "MANUAL_BEP_PROFIT_ONCE_1769768091704_93323a68": {
+    "symbol": "CATIUSDT",
+    "activatePrice": 0.06876717,
+    "activateCondition": "gte",
+    "orderRequest": {
+      "symbol": "CATIUSDT",
+      "side": "short",
+      "order_type": "stop_limit",
+      "quantity": 93.0,
+      "price": 0.05442153716999999,
+      "params": {
+        "reduceOnly": true,
+        "timeInForce": "GTC",
+        "stopPrice": 0.05442153716999999,
+        "tag": "MANUAL_BEP_PROFIT_ONCE",
+        "_skip_local_trigger": true
+      }
+    },
+    "tag": "MANUAL_BEP_PROFIT_ONCE",
+    "createdTs": 1769768091704,
+    "triggerStatus": "CANCELLED",
+    "triggerResult": "CANCELLED",
+    "triggerError": null,
+    "triggeredTs": null,
+    "orderStatus": "CANCELLED",
+    "orderError": null,
+    "orderResult": null,
+    "orderId": null,
+    "clientOrderId": null,
+    "submittedTs": null,
+    "cancelledTs": 1769768180226
+  },
+  "MANUAL_BEP_PROFIT_ONCE_1769768215822_77792b6b": {
+    "symbol": "CYBERUSDT",
+    "activatePrice": 0.6785980712583,
+    "activateCondition": "gte",
+    "orderRequest": {
+      "symbol": "CYBERUSDT",
+      "side": "short",
+      "order_type": "stop_limit",
+      "quantity": 15.1,
+      "price": 0.6648622693295583,
+      "params": {
+        "reduceOnly": true,
+        "timeInForce": "GTC",
+        "stopPrice": 0.6648622693295583,
+        "tag": "MANUAL_BEP_PROFIT_ONCE",
+        "_skip_local_trigger": true
+      }
+    },
+    "tag": "MANUAL_BEP_PROFIT_ONCE",
+    "createdTs": 1769768215822,
+    "triggerStatus": "CANCELLED",
+    "triggerResult": "CANCELLED",
+    "triggerError": null,
+    "triggeredTs": null,
+    "orderStatus": "CANCELLED",
+    "orderError": null,
+    "orderResult": null,
+    "orderId": null,
+    "clientOrderId": null,
+    "submittedTs": null,
+    "cancelledTs": 1769769849204
+  },
+  "MANUAL_BEP_PROFIT_ONCE_1769768448678_7709df15": {
+    "symbol": "CATIUSDT",
+    "activatePrice": 0.05493417,
+    "activateCondition": "gte",
+    "orderRequest": {
+      "symbol": "CATIUSDT",
+      "side": "short",
+      "order_type": "stop_limit",
+      "quantity": 93.0,
+      "price": 0.05442153716999999,
+      "params": {
+        "reduceOnly": true,
+        "timeInForce": "GTC",
+        "stopPrice": 0.05442153716999999,
+        "tag": "MANUAL_BEP_PROFIT_ONCE",
+        "_skip_local_trigger": true
+      }
+    },
+    "tag": "MANUAL_BEP_PROFIT_ONCE",
+    "createdTs": 1769768448678,
+    "triggerStatus": "CANCELLED",
+    "triggerResult": "CANCELLED",
+    "triggerError": null,
+    "triggeredTs": null,
+    "orderStatus": "CANCELLED",
+    "orderError": null,
+    "orderResult": null,
+    "orderId": null,
+    "clientOrderId": null,
+    "submittedTs": null,
+    "cancelledTs": 1769769880743
   }
 }

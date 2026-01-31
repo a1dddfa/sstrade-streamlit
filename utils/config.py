@@ -15,6 +15,8 @@ def load_config(cfg: dict):
         "BINANCE_API_SECRET",
         binance_cfg.get("api_secret", "")
     )
+    api_key = (api_key or "").strip()
+    api_secret = (api_secret or "").strip()
 
     # -------- Proxy configuration (global fallback) --------
     global_proxy = os.getenv(
@@ -24,7 +26,7 @@ def load_config(cfg: dict):
 
     proxy = os.getenv(
         "BINANCE_PROXY",
-        binance_cfg.get("proxy", global_proxy)
+        binance_cfg.get("proxy") or global_proxy
     )
 
     # -------- WebSocket switch --------

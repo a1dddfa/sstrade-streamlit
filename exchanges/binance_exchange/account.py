@@ -59,6 +59,13 @@ class AccountMixin:
                 return self._last_balance
             return {currency: {"free": 0.0, "used": 0.0, "total": 0.0}, "totalWalletBalance": 0.0}
 
+        # ⭐ 检查客户端是否初始化
+        if self.client is None:
+            logger.warning("client is None，跳过私有接口调用（初始化失败）")
+            if self._last_balance is not None:
+                return self._last_balance
+            return {currency: {"free": 0.0, "used": 0.0, "total": 0.0}, "totalWalletBalance": 0.0}
+
         try:
             if self.dry_run:
                 return {
@@ -195,6 +202,35 @@ class AccountMixin:
             )
             return []
 
+        # ⭐ 检查客户端是否初始化
+        if self.client is None:
+            logger.warning("client is None，跳过私有接口调用（初始化失败）")
+            cached = self._last_positions.get(cache_key)
+            if cached is not None:
+                return cached
+            # 没有缓存，就返回“空仓”模拟数据兜底
+            logger.warning(f"获取持仓失败且无缓存，get_positions({cache_key}) 返回模拟空仓数据")
+            positions: List[Dict] = []
+            symbol_for_mock = symbol_fmt or 'BTCUSDT'
+            positions.append({
+                'symbol': symbol_for_mock,
+                'positionAmt': '0.0',
+                'entryPrice': '0.0',
+                'markPrice': '45000.0',
+                'unRealizedProfit': '0.0',
+                'liquidationPrice': '0.0',
+                'leverage': '10',
+                'maxNotionalValue': '25000000.0',
+                'marginType': 'cross',
+                'isolatedMargin': '0.0',
+                'isAutoAddMargin': 'false',
+                'positionSide': 'BOTH',
+                'notional': '0.0',
+                'isolatedWallet': '0.0',
+                'updateTime': 1672531200000,
+            })
+            return positions
+
         try:
             if self.dry_run:
                 # 模拟持仓信息（测试模式）
@@ -290,6 +326,36 @@ class AccountMixin:
         Returns:
             订单信息字典
         """
+        # ⭐ 检查客户端是否初始化
+        if self.client is None:
+            logger.warning("client is None，跳过私有接口调用（初始化失败）")
+            # 返回模拟数据作为后备
+            symbol = self._format_symbol(symbol) if symbol else 'BTCUSDT'
+            
+            return {
+                'orderId': order_id,
+                'symbol': symbol,
+                'status': 'NEW',
+                'clientOrderId': f'dry_{order_id}',
+                'price': '45000.0',
+                'avgPrice': '0.0',
+                'origQty': '0.01',
+                'executedQty': '0.0',
+                'cumQuote': '0.0',
+                'timeInForce': 'GTC',
+                'type': 'LIMIT',
+                'reduceOnly': False,
+                'closePosition': False,
+                'side': 'BUY',
+                'positionSide': 'BOTH',
+                'stopPrice': '0.0',
+                'workingType': 'CONTRACT_PRICE',
+                'priceProtect': False,
+                'origType': 'LIMIT',
+                'time': 1672531200000,
+                'updateTime': 1672531200000
+            }
+
         try:
             if self.dry_run:
                 # 模拟获取订单信息
@@ -377,6 +443,11 @@ class AccountMixin:
         # ⭐ 1.5) user stream 失败降级：限制 open_orders REST 频率
         if self._should_throttle_account_rest("open_orders"):
             logger.warning("[DEGRADED] get_open_orders throttled, return []")
+            return []
+
+        # ⭐ 检查客户端是否初始化
+        if self.client is None:
+            logger.warning("client is None，跳过私有接口调用（初始化失败）")
             return []
 
         try:
