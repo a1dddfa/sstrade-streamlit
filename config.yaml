@@ -6,7 +6,7 @@ global:
   testnet: false
   proxy: "http://127.0.0.1:7897"
   dry_run: false
-  use_ws: false
+  use_ws: false   # 默认值，可被环境变量 USE_WS 覆盖
   # UI 轮询节奏（秒）：持仓 + 未成交订单统一按这个频率刷新
   ui_poll_interval_sec: 60
   # 本地触发订单轮询设置
@@ -21,10 +21,10 @@ global:
 # 交易所配置
 exchanges:
   binance:
-    api_key: "05gSSkms0fP3VBUhKqzqSkE28yxE9JPlQFJtSZaIUIqNtnrHwcFWCgYzkMdcNlep"
-    api_secret: "2bdsfXoTJkE51ptECX8DYtjrAFvHrg9ZcAuWmnhlupmzEP14eYOgM3mKRIs7XEEt"
+    api_key: ""
+    api_secret: ""
     testnet: false
-    proxy: "http://127.0.0.1:7897"
+    proxy: ""
     rate_limit: 10
 
 # 策略配置

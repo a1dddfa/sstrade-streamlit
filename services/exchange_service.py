@@ -130,7 +130,7 @@ def init_exchange_flow(
     Returns:
         (exchange, cfg_dict) where cfg_dict is the loaded config (or None on failure).
     """
-    load_config = _resolve_from_main("load_config")
+    load_config = _resolve_from_main("load_config_file")
     init_exchange = _resolve_from_main("init_exchange")
     logger = _resolve_from_main("logger")
 

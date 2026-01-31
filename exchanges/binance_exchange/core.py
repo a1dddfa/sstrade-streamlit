@@ -254,12 +254,19 @@ class CoreBinanceExchange(BaseExchange):
                 return
                 
             # 初始化WebSocket管理器
-            self.ws_manager = ThreadedWebsocketManager(
-                api_key=self.api_key,
-                api_secret=self.api_secret,
-                testnet=self.testnet,
-                https_proxy=self.proxy
-            )
+            kwargs = {
+                "api_key": self.api_key,
+                "api_secret": self.api_secret,
+                "testnet": self.testnet,
+            }
+
+            if self.proxy:
+                kwargs["https_proxy"] = self.proxy
+
+            # 防止 python-binance 5s 超时
+            kwargs["socket_connect_timeout"] = 15
+
+            self.ws_manager = ThreadedWebsocketManager(**kwargs)
             
             # 启动WebSocket管理器
             self.ws_manager.start()

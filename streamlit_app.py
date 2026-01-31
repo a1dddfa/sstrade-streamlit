@@ -31,6 +31,9 @@ import yaml
 from infra.logging.ui_logger import UILogger
 from infra.ws.user_stream import UserStreamDispatcher
 
+# Import the new config loader
+from utils.config import load_config
+
 # Prefer exchange wrapper under exchanges/
 try:
     from exchanges.binance_exchange import BinanceExchange  # type: ignore
@@ -53,7 +56,7 @@ logger.info("✅ Streamlit logging initialized, log_dir=%s", LOG_DIR)
 # -----------------------------
 # Transitional globals used by sidebar/service modules
 # -----------------------------
-def load_config(cfg_path: str) -> Dict[str, Any]:
+def load_config_file(cfg_path: str) -> Dict[str, Any]:
     """Load YAML config into dict."""
     with open(cfg_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
@@ -72,6 +75,19 @@ def init_exchange(cfg: Dict[str, Any], override_dry_run: bool = False) -> Any:
     if override_dry_run:
         global_cfg = dict(global_cfg)
         global_cfg["dry_run"] = True
+
+    # Load config with environment variable support
+    config_with_env = load_config(cfg)
+    
+    # Update binance config with environment variables
+    binance_cfg = dict(binance_cfg)
+    binance_cfg["api_key"] = config_with_env["api_key"]
+    binance_cfg["api_secret"] = config_with_env["api_secret"]
+    binance_cfg["proxy"] = config_with_env["proxy"]
+    
+    # Update global config with environment variables
+    global_cfg = dict(global_cfg)
+    global_cfg["use_ws"] = config_with_env["use_ws"]
 
     # ✅ 强制用正确层级：BinanceExchange(config, global_config)
     return BinanceExchange(binance_cfg, global_cfg)
