@@ -966,7 +966,18 @@ class BinanceExchange(BaseExchange):
                 'activationPrice',
             ]
             api_params = {k: v for k, v in order_params.items() if k in standard_fields and v is not None}
-            
+
+            # ✅ 兼容 Binance 参数校验：部分触发单（STOP/TAKE_PROFIT 及其 LIMIT 变体）
+            # 在某些环境/品种上不接受 reduceOnly（会报 -1106: Parameter 'reduceonly' sent when not required）
+            # 触发限价止损/止盈本质上可由 side + positionSide + quantity 表达"平仓"，因此这里统一剔除。
+            if api_params.get("type") in ["STOP", "TAKE_PROFIT", "STOP_LOSS_LIMIT", "TAKE_PROFIT_LIMIT"]:
+                api_params.pop("reduceOnly", None)
+
+            # ✅ STOP（触发限价）必须同时具备 stopPrice + price + quantity（避免 silent fail / 参数不全）
+            if api_params.get("type") == "STOP":
+                if ("stopPrice" not in api_params) or ("price" not in api_params) or ("quantity" not in api_params):
+                    raise ValueError(f"STOP(limit) 订单缺少必要参数: stopPrice/price/quantity, api_params={api_params}")
+
             # ✅ 原生跟踪委托 TRAILING_STOP_MARKET：清理不允许的字段，并检查 callbackRate
             if api_params.get("type") == "TRAILING_STOP_MARKET":
                 # callbackRate: 0.1 ~ 5 (单位 %)，必填
