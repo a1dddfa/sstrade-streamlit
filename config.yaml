@@ -17,6 +17,14 @@ global:
   enable_ticker_watch_polling: true
   ticker_watch_poll_interval_sec: 60
   ticker_watch_allow_bootstrap: false
+  # 用户数据流 keepalive 间隔（秒）
+  user_stream_keepalive_sec: 1200  # 20分钟
+  # keepalive 连续失败 N 次后自动重建 user stream
+  user_stream_keepalive_fail_n: 3
+  # 超过 M 分钟无 user event（订单/账户推送）则判定 stale 并触发健康检查 + 重连
+  user_stream_stale_min: 5
+  # 健康检查线程轮询间隔（秒）
+  user_stream_health_check_interval_sec: 15
 
 # 交易所配置
 exchanges:

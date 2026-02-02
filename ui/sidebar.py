@@ -19,6 +19,28 @@ import streamlit as st
 
 from services.exchange_service import init_exchange_flow
 
+# Import bots for strategy selection
+try:
+    from bots.ladder.bot import LadderBot  # type: ignore
+except Exception:
+    LadderBot = None  # type: ignore
+
+try:
+    from bots.range_two.bot import RangeTwoBot  # type: ignore
+except Exception:
+    RangeTwoBot = None  # type: ignore
+
+try:
+    from bots.short_trailing.bot import ShortTrailingBot  # type: ignore
+except Exception:
+    ShortTrailingBot = None  # type: ignore
+
+STRATEGIES = {
+    "Ladder": LadderBot,
+    "Range Two": RangeTwoBot,
+    "Short Trailing": ShortTrailingBot,  # ★ 新增
+}
+
 
 def _resolve_from_main(name: str):
     """Resolve a symbol from the Streamlit main script module (__main__)."""
@@ -36,6 +58,7 @@ def _resolve_from_main(name: str):
 _PAGE_LABELS = {
     "hammer": "🔨 锤子线扫描",
     "ladder": "🧩 阶梯 + 手动下单",
+    "short_trailing": "🪝 Short Trailing（做空跟踪止损）",
     "logs": "🧾 日志",
     "account": "📊 账户",
 }
@@ -67,13 +90,48 @@ def render_sidebar(
         cfg_path = st.text_input("config.yaml 路径", value=cfg_path_default)
         override_dry_run = st.toggle("dry_run（模拟下单）", value=dry_run_default)
 
+        # ==============================
+        # Health indicator (WS/REST/Degraded unified)
+        # ==============================
+        ex = st.session_state.get("exchange")
+        if ex is not None and hasattr(ex, "get_connection_health"):
+            try:
+                h = ex.get_connection_health()
+                ws = h.get("ws")
+                rest = h.get("rest")
+                overall = h.get("overall")
+
+                def _emoji(s: str) -> str:
+                    if s == "ok":
+                        return "🟢"
+                    if s == "degraded":
+                        return "🟡"
+                    return "🔴"
+
+                st.markdown(
+                    """
+                    #### 连接健康
+                    - **WS**: {ws_e}
+                    - **REST**: {rest_e}
+                    - **Overall**: {ov_e}
+                    """.format(
+                        ws_e=f"{_emoji(ws)} {ws}",
+                        rest_e=f"{_emoji(rest)} {rest}",
+                        ov_e=f"{_emoji(overall)} {overall}",
+                    )
+                )
+                if h.get("user_event_age_min") is not None:
+                    st.caption(f"last user event age: {h.get('user_event_age_min')} min")
+            except Exception:
+                # health UI is best-effort
+                pass
+
         st.divider()
         st.header("页面")
         page_key = st.radio(
             "选择功能页",
-            options=["hammer", "ladder", "logs", "account"],
+            options=["hammer", "ladder", "short_trailing", "logs", "account"],
             format_func=lambda k: _PAGE_LABELS.get(k, str(k)),
-            index=0,
             key="page_select",
         )
 

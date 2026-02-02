@@ -12,6 +12,57 @@ from .deps import (
 
 
 class WebsocketMixin:
+    # ----------------------------- 
+    # User stream health / state 
+    # ----------------------------- 
+    def _compute_user_stream_health(self) -> Dict[str, Any]: 
+        """Return a small health snapshot for UI/logging. 
+
+        Status convention: 
+        - ws:   ok/degraded/down 
+        - rest: ok/degraded (account REST throttled) 
+        - overall: ok/degraded/down (worst-of) 
+        """
+        now = time.time() 
+        use_ws = bool(getattr(self, "use_ws", False)) 
+        conn = getattr(self, "user_stream_conn_key", None) 
+
+        stale_min = float((self.global_config or {}).get("user_stream_stale_min", 5.0)) 
+        last_evt = float(getattr(self, "_user_stream_last_event_ts", 0.0) or 0.0) 
+        age_min = (now - last_evt) / 60.0 if last_evt > 0 else 1e9 
+
+        ws_status = "ok" 
+        if not use_ws: 
+            # WS disabled => treat as ok (REST-only mode) 
+            ws_status = "ok" 
+        elif not conn: 
+            ws_status = "down" 
+        elif age_min > stale_min: 
+            ws_status = "degraded" 
+
+        rest_status = "degraded" if bool(getattr(self, "_account_rest_degraded", False)) else "ok" 
+
+        overall = "ok" 
+        if ws_status == "down": 
+            overall = "down" 
+        elif ws_status == "degraded" or rest_status == "degraded": 
+            overall = "degraded" 
+
+        return { 
+            "use_ws": use_ws, 
+            "ws": ws_status, 
+            "rest": rest_status, 
+            "overall": overall, 
+            "user_event_age_min": None if last_evt <= 0 else round(age_min, 2), 
+            "keepalive_fail_count": int(getattr(self, "_user_stream_keepalive_fail_count", 0) or 0), 
+            "subscribe_fail_count": int(getattr(self, "_user_stream_fail_count", 0) or 0), 
+            "conn_key": conn, 
+        } 
+
+    def get_connection_health(self) -> Dict[str, Any]: 
+        """Public method for UI: unified WS/REST/degraded state."""
+        return self._compute_user_stream_health()
+
     def ws_connect(self):
         """
         连接WebSocket
@@ -54,6 +105,8 @@ class WebsocketMixin:
                 return True
                 
             if self.ws_manager:
+                self._stop_user_stream_keepalive()
+                self._stop_user_stream_health_monitor()
                 self.ws_manager.stop()
                 logger.info("WebSocket断开连接")
                 
@@ -314,6 +367,24 @@ class WebsocketMixin:
             # 保存上层回调
             self.user_stream_callback = callback
 
+            # 尝试显式获取 futures listenKey（用于 keepalive）。
+            # 兼容性策略：
+            # - 有 futures_stream_get_listen_key()/futures_get_listen_key 时优先拿到并缓存
+            # - 否则保持 None，让 keepalive 线程自行跳过
+            try:
+                lk = None
+                if hasattr(self.client, "futures_stream_get_listen_key"):
+                    lk = self.client.futures_stream_get_listen_key()
+                elif hasattr(self.client, "futures_get_listen_key"):
+                    lk = self.client.futures_get_listen_key()
+                if isinstance(lk, dict):
+                    lk = lk.get("listenKey")
+                if lk:
+                    self._user_stream_listen_key = str(lk)
+            except Exception:
+                # 拿不到 listenKey 也不阻塞订阅
+                self._user_stream_listen_key = None
+
             last_err = None
             for attempt in range(1, max_retries + 1):
                 try:
@@ -325,9 +396,22 @@ class WebsocketMixin:
                             pass
                         self.user_stream_conn_key = None
 
-                    conn_key = self.ws_manager.start_futures_user_socket(
-                        callback=self._handle_ws_user_stream_message
-                    )
+                    # python-binance 版本差异：有的支持 listen_key 参数
+                    try:
+                        if self._user_stream_listen_key is not None:
+                            conn_key = self.ws_manager.start_futures_user_socket(
+                                callback=self._handle_ws_user_stream_message,
+                                listen_key=self._user_stream_listen_key,
+                            )
+                        else:
+                            conn_key = self.ws_manager.start_futures_user_socket(
+                                callback=self._handle_ws_user_stream_message
+                            )
+                    except TypeError:
+                        # 旧版本不支持 listen_key
+                        conn_key = self.ws_manager.start_futures_user_socket(
+                            callback=self._handle_ws_user_stream_message
+                        )
 
                     # 判空保护：start_xxx 有可能返回 None/空串
                     if not conn_key:
@@ -335,7 +419,12 @@ class WebsocketMixin:
 
                     self.user_stream_conn_key = conn_key
                     self._user_stream_fail_count = 0  # 订阅成功就清零
+                    self._user_stream_keepalive_fail_count = 0
                     logger.info(f"成功订阅用户数据流: conn_key={self.user_stream_conn_key}")
+                    # ---- start keepalive thread ----
+                    self._start_user_stream_keepalive(self._user_stream_listen_key or "")
+                    # ---- start health monitor ----
+                    self._start_user_stream_health_monitor()
                     return True
 
                 except Exception as e:
@@ -360,6 +449,83 @@ class WebsocketMixin:
             self._enter_account_rest_degraded_mode(reason="subscribe_exception", hold_sec=degraded_hold_sec)
             return False
 
+    def _start_user_stream_keepalive(self, listen_key: str) -> None:
+        """Start / restart futures user-stream listenKey keepalive thread."""
+        try:
+            if not listen_key:
+                return
+
+            # stop previous keepalive thread if any
+            self._stop_user_stream_keepalive()
+
+            interval_sec = int((self.global_config or {}).get("user_stream_keepalive_sec", 30 * 60))
+            if interval_sec < 60:
+                interval_sec = 60  # safety floor
+
+            self._user_stream_keepalive_stop = threading.Event()
+            self._user_stream_keepalive_thread = threading.Thread(
+                target=self._user_stream_keepalive_worker,
+                args=(listen_key, interval_sec, self._user_stream_keepalive_stop),
+                daemon=True,
+                name="user_stream_keepalive",
+            )
+            self._user_stream_keepalive_thread.start()
+            logger.info(f"[USER_STREAM_KEEPALIVE] started, interval={interval_sec}s")
+
+        except Exception as e:
+            logger.warning(f"[USER_STREAM_KEEPALIVE] start failed: {e}", exc_info=True)
+
+    def _stop_user_stream_keepalive(self) -> None:
+        """Stop futures user-stream keepalive thread if running."""
+        stop_evt = getattr(self, "_user_stream_keepalive_stop", None)
+        th = getattr(self, "_user_stream_keepalive_thread", None)
+        if stop_evt is not None:
+            try:
+                stop_evt.set()
+            except Exception:
+                pass
+        if th is not None and getattr(th, "is_alive", lambda: False)():
+            try:
+                th.join(timeout=2.0)
+            except Exception:
+                pass
+        self._user_stream_keepalive_stop = None
+        self._user_stream_keepalive_thread = None
+
+    def _user_stream_keepalive_worker(self, listen_key: str, interval_sec: int, stop_evt: threading.Event) -> None:
+        """Periodically renew futures user-stream listenKey to prevent silent disconnect."""
+        max_fail_n = int((self.global_config or {}).get("user_stream_keepalive_fail_n", 3))
+        while not stop_evt.is_set():
+            if stop_evt.wait(timeout=interval_sec):
+                break
+            try:
+                if not listen_key:
+                    logger.debug("[USER_STREAM_KEEPALIVE] listen_key unavailable, skip")
+                    continue
+                if not getattr(self, "client", None):
+                    logger.warning("[USER_STREAM_KEEPALIVE] client is None, skip")
+                    continue
+                if hasattr(self.client, "futures_stream_keepalive"):
+                    self.client.futures_stream_keepalive(listen_key)
+                elif hasattr(self.client, "keepalive_futures_stream"):
+                    self.client.keepalive_futures_stream(listen_key)
+                else:
+                    logger.error("[USER_STREAM_KEEPALIVE] no keepalive method found on client")
+                    continue
+
+                logger.info("[USER_STREAM_KEEPALIVE] renewed listenKey successfully")
+                self._user_stream_keepalive_fail_count = 0
+                self._user_stream_last_keepalive_ok_ts = time.time()
+            except Exception as e:
+                logger.warning(f"[USER_STREAM_KEEPALIVE] renew failed: {e}", exc_info=True)
+                try:
+                    self._user_stream_keepalive_fail_count = int(getattr(self, "_user_stream_keepalive_fail_count", 0) or 0) + 1
+                except Exception:
+                    self._user_stream_keepalive_fail_count = 1
+                if self._user_stream_keepalive_fail_count >= max_fail_n:
+                    # 连续失败 N 次 -> 重建 user stream
+                    self._rebuild_user_stream(reason=f"keepalive_failed_{self._user_stream_keepalive_fail_count}_times")
+
     def ws_unsubscribe_user_stream(self) -> bool:
         """
         取消订阅用户数据流
@@ -374,10 +540,13 @@ class WebsocketMixin:
                 return True
 
             if self.ws_manager and self.user_stream_conn_key:
+                self._stop_user_stream_keepalive()
+                self._stop_user_stream_health_monitor()
                 self.ws_manager.stop_socket(self.user_stream_conn_key)
                 logger.info(f"已取消用户数据流: conn_key={self.user_stream_conn_key}")
                 self.user_stream_conn_key = None
                 self.user_stream_callback = None
+                self._user_stream_listen_key = None
                 return True
 
             logger.warning("当前没有活跃的用户数据流连接")
@@ -400,6 +569,8 @@ class WebsocketMixin:
             if not message:
                 logger.warning("收到空的用户数据流消息")
                 return
+            # ✅ 只要收到有效 message：更新 last event timestamp
+            self._user_stream_last_event_ts = time.time()
             # ✅ 只要能收到有效消息，认为 user stream 活着：退出降级
             self._user_stream_fail_count = 0
             self._account_rest_degraded = False

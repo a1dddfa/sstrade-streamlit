@@ -109,6 +109,10 @@ class RangeTwoBot(BotBase, TickerSubscriptionMixin):
         # ✅ 最近一次非零仓位缓存：避免 REST 降级/限流时误读为 0 导致 BE 不挂
         self._last_qty_cache: Dict[str, float] = {}
 
+        # ✅ WS 断线重连/重建后的"对账"开关：由 dispatcher.handle_ws_event 触发
+        # 只做一次（在 _run 线程里执行），避免在 WS 回调线程里直接打 REST。
+        self._need_resync_from_exchange: bool = False
+
 
     def configure(self, cfg: RangeTwoConfig):
         with self._lock:
@@ -163,6 +167,110 @@ class RangeTwoBot(BotBase, TickerSubscriptionMixin):
         self.state.be_order_id = None
         self.state.last_bep = None
         self.state.last_legs = None
+
+
+    # =========================
+    # ✅ WS 断线/重建后：自动对账 + 重建本地 state
+    # =========================
+    def on_ws_event(self, e: Dict[str, Any]) -> None:
+        """Called from websocket background threads via dispatcher.
+
+        NOTE: DO NOT call Streamlit APIs or touch st.session_state here.
+        """
+        try:
+            if (e.get("event") or "") != "user_stream_rebuild":
+                return
+            if (e.get("stage") or "") != "ok":
+                return
+            # 标记：让 _run 线程在下一轮 tick 里做一次 REST 对账
+            self._need_resync_from_exchange = True
+            # 顺便让 ticker ws 订阅状态重置（如果底层 ws_manager 重启/回调丢失，下一轮会自动补订阅）
+            try:
+                self._ticker_symbol = None  # type: ignore[attr-defined]
+                self._ticker_cb = None      # type: ignore[attr-defined]
+            except Exception:
+                pass
+        except Exception:
+            pass
+
+    def _resync_from_exchange(self) -> None:
+        """Best-effort rebuild of in-memory flags based on exchange truth.
+
+        目标：在 WS 断线期间可能漏掉的 FILLED 回报，恢复 a1_filled/a2_filled，以及尽量识别已存在的保护单。
+        这是"保守重建"：宁可少置位，也不要凭空制造状态。
+        """
+        try:
+            with self._lock:
+                cfg = self.cfg
+                symbol = str(cfg.symbol)
+                side = str(cfg.side)
+                qty1 = float(cfg.qty1)
+                qty2 = float(cfg.qty2)
+
+            # 1) positions -> 推断腿数
+            pos_qty = 0.0
+            try:
+                positions = self.exchange.get_positions(symbol) or []
+                want_side = "LONG" if side == "long" else "SHORT"
+                for p in positions:
+                    if str(p.get("symbol") or "") != self.exchange._format_symbol(symbol):
+                        continue
+                    if str(p.get("positionSide") or "").upper() != want_side:
+                        continue
+                    pos_qty = abs(float(p.get("positionAmt") or 0.0))
+                    break
+            except Exception:
+                pos_qty = 0.0
+
+            # 2) open orders -> 识别保护单是否已存在（避免重复补挂）
+            open_cids: list[str] = []
+            try:
+                oo = self.exchange.get_open_orders(symbol) or []
+                for o in oo:
+                    cid = str(o.get("clientOrderId") or "")
+                    if cid:
+                        open_cids.append(cid)
+            except Exception:
+                open_cids = []
+
+            def _has_kw(kw: str) -> bool:
+                return any((kw in cid) for cid in open_cids)
+
+            # 3) 计算 legs（保守阈值：>= 0.5*qty 认为成交）
+            leg1 = pos_qty >= max(1e-12, qty1 * 0.5)
+            leg2 = pos_qty >= max(1e-12, (qty1 + qty2) * 0.5)
+
+            with self._lock:
+                # 只在"更确定"的方向更新（False -> True），避免误把 True 变回 False
+                if leg1 and not self.state.a1_filled:
+                    self.state.a1_filled = True
+                    self.log.log(f"🔄 WS 重建后对账：检测到仓位>=qty1，标记 A1 已成交 (pos_qty={pos_qty})")
+                if leg2 and not self.state.a2_filled:
+                    self.state.a2_filled = True
+                    self.log.log(f"🔄 WS 重建后对账：检测到仓位>=qty1+qty2，标记 A2 已成交 (pos_qty={pos_qty})")
+
+                # 保护单存在性：仅用于避免重复补挂（不保证 100% 准确）
+                # clientOrderId 里通常会包含 "TP1"/"SL1" 之类关键字（由你下单 tag 生成）
+                if _has_kw("TP1"):
+                    self.state.tp1_placed = True
+                if _has_kw("SL1"):
+                    self.state.sl1_placed = True
+                if _has_kw("TP2"):
+                    self.state.tp2_placed = True
+                if _has_kw("SL2"):
+                    self.state.sl2_placed = True
+
+            # 4) 对账后，尝试补挂（幂等/防抖逻辑在 _ensure_tp_sl_if_needed 里）
+            try:
+                self._ensure_tp_sl_if_needed()
+            except Exception:
+                pass
+
+        except Exception as e:
+            try:
+                self.log.log(f"⚠️ WS 重建后对账失败(忽略)：{e}")
+            except Exception:
+                pass
 
 
     def _ensure_ticker_ws(self, symbol: str):
@@ -824,6 +932,11 @@ class RangeTwoBot(BotBase, TickerSubscriptionMixin):
             try:
                 with self._lock:
                     cfg = self.cfg
+
+                # ✅ WS 重建后对账：在 bot 主线程里做（避免 WS 回调线程里直接打 REST）
+                if self._need_resync_from_exchange:
+                    self._need_resync_from_exchange = False
+                    self._resync_from_exchange()
 
                 # ✅ 开关：默认不启用“保本 BE 单”
                 # 关闭时：如果之前挂过 BE 单，尝试撤掉并清空状态，然后本轮不再执行 BE 逻辑

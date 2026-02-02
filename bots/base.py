@@ -32,3 +32,6 @@ class BotBase:
 
     def is_stopping(self) -> bool:
         return self._stop.is_set()
+
+    def on_ticker(self, price):
+        pass

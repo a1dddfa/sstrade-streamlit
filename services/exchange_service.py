@@ -78,17 +78,42 @@ def rebind_bots_to_exchange(new_ex: Any) -> None:
         if hasattr(rb, "_sub_symbol"):
             rb._sub_symbol = None
 
+    sb = st.session_state.get("short_trailing_bot")
+    if sb is not None:
+        try:
+            sb.stop()
+        except Exception:
+            pass
+        sb.exchange = new_ex
+        if hasattr(sb, "_ticker_symbol"):
+            sb._ticker_symbol = None
+        if hasattr(sb, "_ticker_cb"):
+            sb._ticker_cb = None
+
 
 def register_bots_to_user_stream_dispatcher() -> None:
     """Register bots to the session-scoped dispatcher (range2 bot is used for WS callbacks)."""
     _get_user_stream_dispatcher = _resolve_from_main("_get_user_stream_dispatcher")
     dispatcher = _get_user_stream_dispatcher()
     rb = st.session_state.get("range2_bot")
-    # rb could be None; registering None is used to clear old reference in your dispatcher.
+    sb = st.session_state.get("short_trailing_bot")
+
     try:
         dispatcher.register_range2_bot(rb)
     except Exception:
-        # If dispatcher signature differs, don't hard fail during refactor step.
+        pass
+
+    try:
+        if hasattr(dispatcher, "register_order_consumer"):
+            dispatcher.register_order_consumer(sb)
+    except Exception:
+        pass
+
+    # ✅ WS 事件（如 user_stream 重建）转发给策略，让策略做一次 REST 对账
+    try:
+        if hasattr(dispatcher, "register_ws_event_consumer"):
+            dispatcher.register_ws_event_consumer(sb)
+    except Exception:
         pass
 
 
@@ -105,6 +130,12 @@ def subscribe_user_stream_once(new_ex: Any) -> bool:
     dispatcher = _get_user_stream_dispatcher()
 
     new_ex.ws_subscribe_user_stream(dispatcher.handle_order_update)
+    # ✅ 把"WS 重连/重建事件"也注册到 dispatcher（用于策略自动对账/重建 state）
+    try:
+        if hasattr(new_ex, "set_ws_event_callback"):
+            new_ex.set_ws_event_callback(dispatcher.handle_ws_event)
+    except Exception:
+        pass
     st.session_state["_user_stream_subscribed"] = True
     return True
 

@@ -497,8 +497,17 @@ class BinanceExchange(BaseExchange):
         """
         if self.rate_limited_until <= 0:
             return False
-        
 
+        now = time.time()
+        if now < self.rate_limited_until:
+            remaining = int(self.rate_limited_until - now)
+            logger.warning(f"[RATE LIMIT] 冷却期中，还需 {remaining}s，跳过 Binance API 调用")
+            return True
+
+        # 冷却期结束，重置
+        self.rate_limited_until = 0.0
+        self.consecutive_1003 = 0
+        return False
 
     # =========================
     # ⭐ User Data Stream 缓存读取

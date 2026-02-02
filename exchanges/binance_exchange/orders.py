@@ -206,6 +206,22 @@ class OrdersMixin:
             quantity_precise = self.amount_to_precision(symbol_fmt, quantity)
             price_precise = self.price_to_precision(symbol_fmt, price) if price is not None else None
 
+            # ✅ 防御：精度截断可能把 quantity 变成 0（例如低于 minQty/stepSize）
+            # 这会导致 Binance 返回 "Quantity less than or equal to zero"。
+            try:
+                _q = float(quantity_precise)
+            except Exception:
+                try:
+                    _q = float(Decimal(str(quantity_precise)))
+                except Exception:
+                    _q = None
+
+            if _q is not None and _q <= 0:
+                raise ValueError(
+                    f"Quantity after precision is <= 0 (symbol={symbol_fmt}, raw={quantity}, precise={quantity_precise}). "
+                    "请提高下单数量或检查该交易对的最小下单量/步进。"
+                )
+
             if 'stopPrice' in processed_params:
                 processed_params['stopPrice'] = self.price_to_precision(symbol_fmt, processed_params['stopPrice'])
 

@@ -13,6 +13,17 @@ from .deps import (
 from exchanges.base_exchange import BaseExchange
 
 
+def _safe_call(cb: Optional[Callable[..., Any]], *args: Any, **kwargs: Any) -> None:
+    """Call callback safely (never raise)."""
+    if cb is None:
+        return
+    try:
+        cb(*args, **kwargs)
+    except Exception:
+        # Never let observer crash WS threads.
+        logger.warning("[WS_EVENT] callback raised", exc_info=True)
+
+
 class CoreBinanceExchange(BaseExchange):
     def __init__(self, config, global_config=None):
         """
@@ -146,6 +157,19 @@ class CoreBinanceExchange(BaseExchange):
         # ⭐ User Stream 故障降级：REST 降频 + 保护
         # =========================
         self._user_stream_fail_count: int = 0
+        # keepalive 连续失败计数（独立于 subscribe fail）
+        self._user_stream_keepalive_fail_count: int = 0
+        # 最近一次收到 user stream 事件的时间（time.time() 秒）
+        self._user_stream_last_event_ts: float = 0.0
+        # 最近一次成功 keepalive 的时间（time.time() 秒）
+        self._user_stream_last_keepalive_ok_ts: float = 0.0
+        # 防止多线程重复重连
+        self._user_stream_rebuild_lock = threading.RLock()
+        # health monitor thread
+        self._user_stream_health_stop = threading.Event()
+        self._user_stream_health_thread = None
+        # listenKey（如果能拿到；某些 ws_manager 会自己管理）
+        self._user_stream_listen_key: Optional[str] = None
         # 进入降级模式后，至少维持到这个时间点（避免抖动）
         self._user_stream_failed_until: float = 0.0
 
@@ -165,8 +189,133 @@ class CoreBinanceExchange(BaseExchange):
             "positions": 0.0,
             "open_orders": 0.0,
         }
-        # 是否处于“账户 REST 降频”模式
+        # 是否处于"账户 REST 降频"模式
         self._account_rest_degraded: bool = False
+
+        # =========================
+        # ⭐ WS 事件回调（用于"WS 断线/重连后策略自愈"）
+        # =========================
+        # 注意：WS 回调线程里会调用该回调；回调内部不要访问 streamlit session_state。
+        self._ws_event_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+
+    # -----------------------------    
+    # WS event hook (public)
+    # -----------------------------    
+    def set_ws_event_callback(self, cb: Optional[Callable[[Dict[str, Any]], None]]) -> None:
+        """Register a single WS event callback.
+
+        The callback will be invoked from background threads (keepalive/health/ws callback).
+        It must be fast and must not raise.
+        """
+        self._ws_event_callback = cb
+
+    def _emit_ws_event(self, event: str, **payload: Any) -> None:
+        """Emit a small WS event payload for higher layers (dispatcher/bots/UI).
+
+        Payload format (example):
+            {"event": "user_stream_rebuild", "stage": "ok", "reason": "...", "ts": 123.45}
+        """
+        d: Dict[str, Any] = {"event": str(event), "ts": time.time()}
+        d.update(payload)
+        _safe_call(getattr(self, "_ws_event_callback", None), d)
+
+    def _rebuild_user_stream(self, reason: str = "") -> bool:
+        """Best-effort rebuild user stream.
+
+        IMPORTANT: safe to call from keepalive/health threads.
+        """
+        if self.dry_run or not getattr(self, "use_ws", False):
+            return False
+
+        with getattr(self, "_user_stream_rebuild_lock", threading.RLock()):
+            try:
+                logger.warning(f"[USER_STREAM] rebuilding... reason={reason}")
+                self._emit_ws_event("user_stream_rebuild", stage="start", reason=reason)
+                cb = getattr(self, "user_stream_callback", None)
+                if cb is None:
+                    logger.warning("[USER_STREAM] rebuild skipped: no user_stream_callback")
+                    self._emit_ws_event("user_stream_rebuild", stage="skip", reason="no_user_stream_callback")
+                    return False
+                # hard reset
+                try:
+                    self.ws_unsubscribe_user_stream()
+                except Exception:
+                    pass
+                # resubscribe (will restart keepalive + monitor)
+                ok = bool(self.ws_subscribe_user_stream(cb))
+                if ok:
+                    logger.warning("[USER_STREAM] rebuild ok")
+                    self._emit_ws_event("user_stream_rebuild", stage="ok", reason=reason)
+                else:
+                    logger.warning("[USER_STREAM] rebuild failed")
+                    self._emit_ws_event("user_stream_rebuild", stage="fail", reason=reason)
+                return ok
+            except Exception:
+                logger.error("[USER_STREAM] rebuild exception", exc_info=True)
+                self._emit_ws_event("user_stream_rebuild", stage="error", reason=reason)
+                return False
+
+    def _start_user_stream_health_monitor(self) -> None:
+        """Background monitor: if no user event over M minutes -> health check + reconnect."""
+        try:
+            # stop previous
+            self._stop_user_stream_health_monitor()
+
+            interval_sec = float((self.global_config or {}).get("user_stream_health_check_interval_sec", 15.0))
+            interval_sec = max(5.0, interval_sec)
+
+            self._user_stream_health_stop = threading.Event()
+
+            def _run():
+                stale_min = float((self.global_config or {}).get("user_stream_stale_min", 5.0))
+                while not self._user_stream_health_stop.is_set():
+                    if self._user_stream_health_stop.wait(timeout=interval_sec):
+                        break
+                    try:
+                        # Only monitor when WS is enabled and we had a successful subscribe.
+                        if not getattr(self, "use_ws", False):
+                            continue
+                        if not getattr(self, "user_stream_conn_key", None):
+                            continue
+                        last_evt = float(getattr(self, "_user_stream_last_event_ts", 0.0) or 0.0)
+                        if last_evt <= 0:
+                            # never received any event yet: don't force rebuild immediately
+                            continue
+                        age_min = (time.time() - last_evt) / 60.0
+                        if age_min > stale_min:
+                            # health check: try to rebuild user stream
+                            self._rebuild_user_stream(reason=f"stale_no_event_{age_min:.2f}min")
+                    except Exception:
+                        logger.warning("[USER_STREAM] health monitor tick failed", exc_info=True)
+
+            self._user_stream_health_thread = threading.Thread(
+                target=_run,
+                daemon=True,
+                name="user_stream_health",
+            )
+            self._user_stream_health_thread.start()
+            logger.info(f"[USER_STREAM_HEALTH] started, interval={interval_sec}s")
+        except Exception:
+            logger.warning("[USER_STREAM_HEALTH] start failed", exc_info=True)
+
+    def _stop_user_stream_health_monitor(self) -> None:
+        try:
+            stop_evt = getattr(self, "_user_stream_health_stop", None)
+            th = getattr(self, "_user_stream_health_thread", None)
+            if stop_evt is not None:
+                try:
+                    stop_evt.set()
+                except Exception:
+                    pass
+            if th is not None and getattr(th, "is_alive", lambda: False)():
+                try:
+                    th.join(timeout=2.0)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        self._user_stream_health_stop = threading.Event()
+        self._user_stream_health_thread = None
 
     def _start_local_trigger_polling_thread(self):
         """后台轮询：检查 deferred_stop_limit + 本地触发订单是否满足触发条件。"""
@@ -211,6 +360,13 @@ class CoreBinanceExchange(BaseExchange):
         try:
             if getattr(self, "_ticker_watch_stop", None):
                 self._ticker_watch_stop.set()
+        except Exception:
+            pass
+
+        # ✅ 停止用户流健康监控线程
+        try:
+            if getattr(self, "_user_stream_health_stop", None):
+                self._user_stream_health_stop.set()
         except Exception:
             pass
 
