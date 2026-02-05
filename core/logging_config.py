@@ -64,3 +64,25 @@ def setup_logging(log_dir: str = "logs", level: int = logging.INFO) -> None:
 
     # 是否让 trade 也同步进 framework.log（想完全分离就设 False）
     trade_logger.propagate = True
+
+    # ===== Short Trailing 日志（单独文件，便于排查追价/撤挂逻辑）=====
+    # 说明：root 仍由 level 控制（默认 INFO），但 short_trailing 单独设为 DEBUG，
+    # 这样不会把全局日志变得很吵。
+    st_logger = logging.getLogger("short_trailing")
+    st_logger.setLevel(logging.DEBUG)
+
+    st_fh = RotatingFileHandler(
+        os.path.join(log_dir, "short_trailing.log"),
+        maxBytes=20 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    st_fh.setLevel(logging.DEBUG)
+    st_fh.setFormatter(fmt)
+
+    if not any(isinstance(h, RotatingFileHandler) and getattr(h, "baseFilename", "").endswith("short_trailing.log")
+               for h in st_logger.handlers):
+        st_logger.addHandler(st_fh)
+
+    # 默认也同步进 framework.log（方便一份总览）；想完全分离可设 False
+    st_logger.propagate = True

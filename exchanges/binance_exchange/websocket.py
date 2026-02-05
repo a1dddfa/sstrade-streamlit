@@ -633,9 +633,23 @@ class WebsocketMixin:
                 "updateTime":    message.get("E"),
             }
 
-            # 从 clientOrderId 里还原 tag（例如 "A1_170..." -> "A1"）
-            client_id = order.get("clientOrderId") or ""
-            order["tag"] = client_id.split("_")[0] if client_id else None
+            # ===== 还原 tag（策略识别关键字段） =====
+            # 1) 常规：clientOrderId 形如 "TAG_170..."，直接取前缀
+            # 2) 条件单/算法单：clientOrderId 常被替换成 "x-..."（clientAlgoId）
+            #    这时用 REST 下单时记录的映射还原为原始策略 tag（例如 UI_SHORTTRAILSTACK_ENTRY）
+            client_id = str(order.get("clientOrderId") or "").strip()
+            resolved_tag = None
+            if client_id and "_" in client_id:
+                resolved_tag = client_id.split("_")[0]
+            else:
+                resolved_tag = self._resolve_tag_from_ids(
+                    client_order_id=client_id or None,
+                    order_id=str(order.get("orderId") or "").strip() or None,
+                )
+                # 如果还是没找到，至少保留原值便于排查
+                if resolved_tag is None and client_id:
+                    resolved_tag = client_id
+            order["tag"] = resolved_tag
 
             sym = order.get("symbol")
             status = (order.get("status") or "").upper()

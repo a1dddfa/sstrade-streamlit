@@ -80,6 +80,9 @@ class CoreBinanceExchange(BaseExchange):
         # 未成交订单缓存：symbol -> {key(orderId/clientOrderId): order_dict}
         self._ws_open_orders: Dict[str, Dict[str, Dict[str, Any]]] = {}
         self._ws_last_update_ts: int = 0
+
+        # ⭐ WS/REST tag 映射
+        self._id_to_tag: Dict[str, str] = {}
         # ⭐ 延迟挂单：主单未成交时，不挂 closePosition=True 的 SL
         # key: 主单 clientOrderId（例如 "MANUAL_UI_170..."）
         # val: {"symbol": "...", "positionSide": "...", "stopPrice": "...", "entrySide": "BUY/SELL", "tag": "..."}
@@ -218,6 +221,51 @@ class CoreBinanceExchange(BaseExchange):
         d: Dict[str, Any] = {"event": str(event), "ts": time.time()}
         d.update(payload)
         _safe_call(getattr(self, "_ws_event_callback", None), d)
+
+    # =========================
+    # ⭐ Tag 映射工具（核心修复）
+    # =========================
+    def _register_tag_mapping(self, tag: Optional[str], order: Optional[Dict[str, Any]]) -> None:
+        """从 REST 下单返回里记录 id->tag 映射，用于 WS 回报还原策略 tag。"""
+        if not tag or not order:
+            return
+        try:
+            t = str(tag)
+            candidates = [
+                order.get("clientOrderId"),
+                order.get("newClientOrderId"),
+                order.get("clientAlgoId"),
+                order.get("algoId"),
+                order.get("orderId"),
+                order.get("id"),
+            ]
+            for c in candidates:
+                if c is None:
+                    continue
+                k = str(c).strip()
+                if not k:
+                    continue
+                self._id_to_tag[k] = t
+        except Exception:
+            logger.debug("_register_tag_mapping failed", exc_info=True)
+
+    def _resolve_tag_from_ids(
+        self,
+        client_order_id: Optional[str] = None,
+        order_id: Optional[str] = None,
+        client_algo_id: Optional[str] = None,
+        algo_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """用 id->tag 映射还原策略 tag。"""
+        for v in (client_order_id, client_algo_id, algo_id, order_id):
+            if v is None:
+                continue
+            k = str(v).strip()
+            if not k:
+                continue
+            if k in self._id_to_tag:
+                return self._id_to_tag.get(k)
+        return None
 
     def _rebuild_user_stream(self, reason: str = "") -> bool:
         """Best-effort rebuild user stream.

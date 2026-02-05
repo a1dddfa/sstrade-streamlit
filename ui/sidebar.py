@@ -35,10 +35,16 @@ try:
 except Exception:
     ShortTrailingBot = None  # type: ignore
 
+try:
+    from bots.short_trailing_stack.bot import ShortTrailingStackBot  # type: ignore
+except Exception:
+    ShortTrailingStackBot = None  # type: ignore
+
 STRATEGIES = {
     "Ladder": LadderBot,
     "Range Two": RangeTwoBot,
     "Short Trailing": ShortTrailingBot,  # ★ 新增
+    "Short Trailing Stack": ShortTrailingStackBot,
 }
 
 
@@ -59,6 +65,7 @@ _PAGE_LABELS = {
     "hammer": "🔨 锤子线扫描",
     "ladder": "🧩 阶梯 + 手动下单",
     "short_trailing": "🪝 Short Trailing（做空跟踪止损）",
+    "short_trailing_stack": "🪝 Short Trailing Stack（做空叠加止损）",
     "logs": "🧾 日志",
     "account": "📊 账户",
 }
@@ -130,7 +137,7 @@ def render_sidebar(
         st.header("页面")
         page_key = st.radio(
             "选择功能页",
-            options=["hammer", "ladder", "short_trailing", "logs", "account"],
+            options=["hammer", "ladder", "short_trailing", "short_trailing_stack", "logs", "account"],
             format_func=lambda k: _PAGE_LABELS.get(k, str(k)),
             key="page_select",
         )

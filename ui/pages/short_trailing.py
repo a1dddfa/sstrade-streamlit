@@ -184,21 +184,8 @@ def render() -> None:
 
             bot.start()
             try:
-                if bool(getattr(cfg, "entry_maker_only", False)):
-                    # Maker-only entry: peg to best ask
-                    bot.logic.place_entry_maker_best_ask()
-                else:
-                    last_px = _get_last_price(symbol)
-                    if last_px is None:
-                        detail = st.session_state.get("last_ticker_error")
-                        if detail:
-                            st.error(f"无法获取市价（ticker）：{detail}")
-                        else:
-                            st.error("无法获取市价（ticker），请确认交易所连接正常/该交易对可用")
-                        return
-                    # Legacy: 做空限价单挂在市价上方，等待拉升成交
-                    entry_price = float(last_px) + float(entry_distance)
-                    bot.logic.place_entry(entry_price)
+                # Entry: trigger on bid2
+                bot.logic.place_entry_trigger_bid2()
             except Exception as e:
                 try:
                     bot.stop()

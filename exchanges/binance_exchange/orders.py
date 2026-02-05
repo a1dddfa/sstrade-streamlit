@@ -38,6 +38,95 @@ class OrdersMixin:
             logger.error(f"创建Algo订单失败: {e}")
             raise
 
+    def _futures_algo_cancel_order(self, *, symbol: str, algo_id: str | int) -> Dict[str, Any]:
+        """Cancel Binance USDⓈ-M Futures Algo conditional order.
+
+        Endpoint: DELETE /fapi/v1/algoOrder
+        Notes:
+          - Some conditional orders are returned as algo orders (algoId/algoOrderId) rather than orderId.
+          - The official param is `algoId`.
+        """
+        # Give signed endpoint a timestamp/recvWindow (avoid lib version differences)
+        import time
+
+        api_params: Dict[str, Any] = {
+            "symbol": self._format_symbol(symbol),
+            "algoId": str(algo_id),
+            "recvWindow": 5000,
+            "timestamp": int(time.time() * 1000),
+        }
+        result = self.client._request_futures_api(
+            method="delete",
+            path="algoOrder",
+            signed=True,
+            data=api_params,
+        )
+        logger.info(f"币安API返回Algo撤单: {result}")
+        return result
+
+    def cancel_algo_order(self, *, symbol: str, algo_id: str | int) -> bool:
+        """Cancel USDⓈ-M Futures algo conditional order by algoId.
+        Endpoint: DELETE /fapi/v1/algoOrder
+        """
+        if self.dry_run:
+            logger.info(f"[DRY RUN] cancel_algo_order | symbol={symbol} algo_id={algo_id}")
+            return True
+
+        params = {
+            "symbol": self._format_symbol(symbol),
+            "algoId": str(algo_id),
+            "recvWindow": 5000,
+            "timestamp": int(time.time() * 1000),
+        }
+        # python-binance internal futures request (consistent with create-algo path)
+        res = self.client._request_futures_api(
+            method="delete",
+            path="algoOrder",
+            signed=True,
+            data=params,
+        )
+        logger.info(f"cancel_algo_order resp | {res}")
+        return bool(res)
+
+    def cancel_order_any(self, *, symbol: str, order_id: str | int | None = None, client_order_id: str | None = None,
+                         algo_id: str | int | None = None) -> bool:
+        """Best-effort cancel that supports both standard and algo conditional orders.
+
+        Priority:
+          1) standard orderId/clientOrderId via futures_cancel_order
+          2) algoId via DELETE /fapi/v1/algoOrder
+        """
+        if order_id is not None or client_order_id is not None:
+            # Prefer standard cancel first (works for normal STOP/STOP_LIMIT too)
+            oid = str(order_id) if order_id is not None else str(client_order_id)
+            ok = self.cancel_order(order_id=oid, symbol=symbol)
+            if ok:
+                return True
+
+        if algo_id is None:
+            return False
+
+        try:
+            if self.dry_run:
+                logger.info(f"[DRY RUN] 取消Algo订单成功: algo_id={algo_id}")
+                trade_logger.info(
+                    "CANCEL_ALGO_ORDER | dry_run=1 | algo_id=%s | symbol=%s",
+                    str(algo_id), self._format_symbol(symbol)
+                )
+                return True
+
+            res = self._futures_algo_cancel_order(symbol=symbol, algo_id=algo_id)
+            ok = bool(res)
+            if ok:
+                trade_logger.info(
+                    "CANCEL_ALGO_ORDER | dry_run=0 | algo_id=%s | symbol=%s",
+                    str(algo_id), self._format_symbol(symbol)
+                )
+            return ok
+        except Exception as e:
+            logger.error(f"取消Algo订单失败: {e}")
+            return False
+
     def create_order(self, symbol: str, side: str, order_type: str,
                      quantity: float, price: Optional[float] = None,
                      params: Optional[Dict] = None) -> Dict:
@@ -284,7 +373,23 @@ class OrdersMixin:
                 'activationPrice',
             ]
             api_params = {k: v for k, v in order_params.items() if k in standard_fields and v is not None}
-            
+
+            # ✅ 市价类订单不要传 timeInForce（Binance 会报参数错误）
+            if api_params.get("type") in (
+                "MARKET",
+                "STOP_MARKET",
+                "TAKE_PROFIT_MARKET",
+                "TRAILING_STOP_MARKET",
+            ):
+                api_params.pop("timeInForce", None)
+
+            # Binance 对条件单（STOP / TAKE_PROFIT）在部分模式下不接受 reduceOnly
+            # 例如：STOP + reduceOnly 会直接返回 -1106
+            if api_params.get("type") in (
+                "STOP", "STOP_MARKET", "TAKE_PROFIT", "TAKE_PROFIT_MARKET"
+            ):
+                api_params.pop("reduceOnly", None)
+
             # ✅ 原生跟踪委托 TRAILING_STOP_MARKET：清理不允许的字段，并检查 callbackRate
             if api_params.get("type") == "TRAILING_STOP_MARKET":
                 # callbackRate: 0.1 ~ 5 (单位 %)，必填
@@ -332,11 +437,16 @@ class OrdersMixin:
 
             logger.info(f"币安API返回主订单: {order}")
 
+            # ⭐ 注册 tag 映射
+            self._register_tag_mapping(processed_params.get("tag"), order)
+
             trade_logger.info(
-                "CREATE_ORDER | dry_run=0 | symbol=%s | side=%s | type=%s | qty=%s | price=%s | orderId=%s | clientId=%s | tag=%s",
+                "CREATE_ORDER | dry_run=0 | symbol=%s | side=%s | type=%s | qty=%s | price=%s | orderId=%s | clientId=%s | clientAlgoId=%s | algoId=%s | tag=%s",
                 order.get("symbol"), order.get("side"), order.get("type"),
                 order.get("origQty") or order.get("quantity"), order.get("price"),
-                order.get("orderId"), order.get("clientOrderId"), processed_params.get("tag"),
+                order.get("orderId"), order.get("clientOrderId"),
+                order.get("clientAlgoId"), order.get("algoId"),
+                processed_params.get("tag"),
             )
 
             # 记录 TP/SL 子单 id

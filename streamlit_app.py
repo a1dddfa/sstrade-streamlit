@@ -109,6 +109,7 @@ from ui.sidebar import render_sidebar
 from ui.pages.hammer_scanner import render as render_hammer_scanner
 from ui.pages.ladder_and_manual import render as render_ladder_and_manual
 from ui.pages.short_trailing import render as render_short_trailing
+from ui.pages.short_trailing_stack import render as render_short_trailing_stack
 
 
 def _ensure_ui_logger_registered() -> UILogger:
@@ -167,7 +168,7 @@ def render_account_page() -> None:
 
 def main() -> None:
     st.set_page_config(page_title="Trading Control Panel", layout="wide")
-    st.title("📟 Trading Control Panel（扫描 + 阶梯 + Short Trailing + 手动下单）")
+    st.title("📟 Trading Control Panel（扫描 + 阶梯 + Short Trailing + Short Trailing Stack + 手动下单）")
 
     ui_logger = _ensure_ui_logger_registered()
     page = render_sidebar()
@@ -178,6 +179,8 @@ def main() -> None:
         render_ladder_and_manual()
     elif page == "short_trailing":
         render_short_trailing()
+    elif page == "short_trailing_stack":
+        render_short_trailing_stack()
     elif page == "logs":
         render_logs_page(ui_logger)
     elif page == "account":

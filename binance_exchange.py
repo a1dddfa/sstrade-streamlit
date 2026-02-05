@@ -18,6 +18,34 @@ class BinanceExchange(BaseExchange):
     """
     币安交易所实现类
     """
+
+    def _get_mark_price(self, symbol_fmt: str) -> Optional[float]:
+        """获取 mark price，用于判断 stopPrice 是否已越过触发区间。
+
+        说明：
+        - 优先使用 futures_mark_price / futures_premium_index（返回 markPrice）。
+        - 获取失败时返回 None（放弃"越界→立即市价平仓"判断，保持原逻辑）。
+        """
+        try:
+            if getattr(self, "dry_run", False):
+                return None
+
+            data = None
+            if hasattr(self.client, "futures_mark_price"):
+                data = self.client.futures_mark_price(symbol=symbol_fmt)
+            elif hasattr(self.client, "futures_premium_index"):
+                data = self.client.futures_premium_index(symbol=symbol_fmt)
+            elif hasattr(self.client, "futures_ticker_price"):
+                data = self.client.futures_ticker_price(symbol=symbol_fmt)
+
+            if not data:
+                return None
+
+            mp = data.get("markPrice") or data.get("price")
+            return float(mp) if mp is not None else None
+        except Exception as e:
+            logger.warning(f"[BINANCE] GET_MARK_PRICE_FAILED | symbol={symbol_fmt} | err={e}")
+            return None
     
     def __init__(self, config, global_config=None):
         """
@@ -74,7 +102,28 @@ class BinanceExchange(BaseExchange):
         self.user_stream_conn_key = None          # 用户流连接 key
         self.user_stream_callback = None          # 上层回调（把订单更新推给策略）
         self._ws_initialized = False  # WebSocket是否已初始化
+
+        # ⭐ WS/REST tag 映射（条件单 clientOrderId 被替换问题）
+        self._id_to_tag: Dict[str, str] = {}
     
+    def _register_tag_mapping(self, tag: Optional[str], order: Optional[Dict[str, Any]]) -> None:
+        if not tag or not order:
+            return
+        for k in (
+            order.get("clientOrderId"),
+            order.get("clientAlgoId"),
+            order.get("algoId"),
+            order.get("orderId"),
+        ):
+            if k:
+                self._id_to_tag[str(k)] = str(tag)
+
+    def _resolve_tag_from_ids(self, client_order_id=None, order_id=None) -> Optional[str]:
+        for k in (client_order_id, order_id):
+            if k and str(k) in self._id_to_tag:
+                return self._id_to_tag[str(k)]
+        return None
+
     def _init_client(self):
         """
         初始化币安客户端
@@ -369,8 +418,14 @@ class BinanceExchange(BaseExchange):
             }
 
             # 从 clientOrderId 里还原 tag（例如 "A1_170..." -> "A1"）
-            client_id = order.get("clientOrderId") or ""
-            order["tag"] = client_id.split("_")[0] if client_id else None
+            client_id = str(order.get("clientOrderId") or "").strip()
+            if client_id and "_" in client_id:
+                order["tag"] = client_id.split("_")[0]
+            else:
+                order["tag"] = self._resolve_tag_from_ids(
+                    client_order_id=client_id or None,
+                    order_id=str(order.get("orderId") or "").strip() or None,
+                )
 
             sym = order.get("symbol")
             status = (order.get("status") or "").upper()
@@ -967,6 +1022,15 @@ class BinanceExchange(BaseExchange):
             ]
             api_params = {k: v for k, v in order_params.items() if k in standard_fields and v is not None}
 
+            # ✅ 市价类订单不要传 timeInForce（Binance 会报参数错误）
+            if api_params.get("type") in (
+                "MARKET",
+                "STOP_MARKET",
+                "TAKE_PROFIT_MARKET",
+                "TRAILING_STOP_MARKET",
+            ):
+                api_params.pop("timeInForce", None)
+
             # ✅ 兼容 Binance 参数校验：部分触发单（STOP/TAKE_PROFIT 及其 LIMIT 变体）
             # 在某些环境/品种上不接受 reduceOnly（会报 -1106: Parameter 'reduceonly' sent when not required）
             # 触发限价止损/止盈本质上可由 side + positionSide + quantity 表达"平仓"，因此这里统一剔除。
@@ -1019,11 +1083,52 @@ class BinanceExchange(BaseExchange):
                     f"tag={processed_params.get('tag')}"
                 )
 
-                order = self.client.futures_create_order(**api_params)
-            else:
-                order = self.client.futures_create_order(**api_params)
+                # ====== ✅ 防止 -2021：stopPrice 已越过触发基准价时，直接“立即市价平仓” ======
+                # 你在日志里遇到的 -2021（Order would immediately trigger）本质是 stopPrice
+                # 已经处于“立即触发”区间，币安会拒绝挂单。这里按你的需求改为：越界 → 立即市价平仓。
+                if ("stopPrice" in api_params) and (api_params.get("type") in ["STOP", "STOP_MARKET"]):
+                    mp = self._get_mark_price(symbol_fmt)
+                    try:
+                        sp = float(api_params.get("stopPrice")) if api_params.get("stopPrice") is not None else None
+                    except Exception:
+                        sp = None
+
+                    if (mp is not None) and (sp is not None):
+                        side_now = api_params.get("side")
+                        would_trigger = (side_now == "BUY" and mp >= sp) or (side_now == "SELL" and mp <= sp)
+
+                        if would_trigger:
+                            market_params: Dict[str, Any] = {
+                                "symbol": api_params.get("symbol"),
+                                "side": side_now,
+                                "type": "MARKET",
+                                "quantity": quantity_precise,
+                                "positionSide": api_params.get("positionSide"),
+                            }
+
+                            # 沿用 clientOrderId（如果上层传了 tag）方便追踪
+                            if api_params.get("newClientOrderId"):
+                                market_params["newClientOrderId"] = api_params["newClientOrderId"]
+
+                            # 不需要 reduceOnly（按你的要求），也不要传 stopPrice/closePosition/price/timeInForce 等
+                            logger.warning(
+                                f"[BINANCE] STOP_PRICE_CROSSED | symbol={symbol_fmt} | mp={mp} | sp={sp} | "
+                                f"fallback=MARKET_CLOSE | side={side_now} | positionSide={api_params.get('positionSide')}"
+                            )
+
+                            order = self.client.futures_create_order(**market_params)
+                        else:
+                            order = self.client.futures_create_order(**api_params)
+                    else:
+                        # 拿不到 mark price 就走原逻辑
+                        order = self.client.futures_create_order(**api_params)
+                else:
+                    order = self.client.futures_create_order(**api_params)
 
             logger.info(f"币安API返回主订单: {order}")
+
+            # ⭐ 注册 tag 映射
+            self._register_tag_mapping(processed_params.get("tag"), order)
 
             # 记录 TP/SL 子单 id
             order['takeProfitOrderId'] = None

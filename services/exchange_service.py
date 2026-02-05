@@ -79,6 +79,7 @@ def rebind_bots_to_exchange(new_ex: Any) -> None:
             rb._sub_symbol = None
 
     sb = st.session_state.get("short_trailing_bot")
+    ssb = st.session_state.get("short_trailing_stack_bot")
     if sb is not None:
         try:
             sb.stop()
@@ -91,12 +92,26 @@ def rebind_bots_to_exchange(new_ex: Any) -> None:
             sb._ticker_cb = None
 
 
+    ssb = st.session_state.get("short_trailing_stack_bot")
+    if ssb is not None:
+        try:
+            ssb.stop()
+        except Exception:
+            pass
+        ssb.exchange = new_ex
+        if hasattr(ssb, "_ticker_symbol"):
+            ssb._ticker_symbol = None
+        if hasattr(ssb, "_ticker_cb"):
+            ssb._ticker_cb = None
+
+
 def register_bots_to_user_stream_dispatcher() -> None:
     """Register bots to the session-scoped dispatcher (range2 bot is used for WS callbacks)."""
     _get_user_stream_dispatcher = _resolve_from_main("_get_user_stream_dispatcher")
     dispatcher = _get_user_stream_dispatcher()
     rb = st.session_state.get("range2_bot")
     sb = st.session_state.get("short_trailing_bot")
+    ssb = st.session_state.get("short_trailing_stack_bot")
 
     try:
         dispatcher.register_range2_bot(rb)
@@ -109,10 +124,22 @@ def register_bots_to_user_stream_dispatcher() -> None:
     except Exception:
         pass
 
+    try:
+        if hasattr(dispatcher, "register_order_consumer"):
+            dispatcher.register_order_consumer(ssb)
+    except Exception:
+        pass
+
     # ✅ WS 事件（如 user_stream 重建）转发给策略，让策略做一次 REST 对账
     try:
         if hasattr(dispatcher, "register_ws_event_consumer"):
             dispatcher.register_ws_event_consumer(sb)
+    except Exception:
+        pass
+
+    try:
+        if hasattr(dispatcher, "register_ws_event_consumer"):
+            dispatcher.register_ws_event_consumer(ssb)
     except Exception:
         pass
 

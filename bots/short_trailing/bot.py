@@ -141,18 +141,87 @@ class ShortTrailingBot(BotBase, TickerSubscriptionMixin):
                 return
 
             cid = str(order.get("clientOrderId") or "")
+            oid = str(order.get("orderId") or "")
+            # Binance conditional/algo orders can rewrite/replace clientOrderId.
+            # Many wrappers put the original client/algo id into a separate field.
+            tag = str(
+                order.get("tag")
+                or order.get("clientAlgoId")
+                or order.get("origClientOrderId")
+                or ""
+            )
+            algo_id = str(order.get("algoId") or order.get("algoOrderId") or "")
             avg = float(order.get("avgPrice") or 0.0)
             fill_price = avg if avg > 0 else float(order.get("price") or 0.0)
 
-            if f"{self.cfg.tag_prefix}_ENTRY" in cid:
-                self.logic.on_entry_filled(fill_price)
-                return
+            # ✅ Entry recognition: support both standard clientOrderId and algo/tag rewrites.
+            # Guard against double-trigger if WS replay happens.
+            if not self.logic.state.position_open:
+                s = self.logic.state
 
+                # 1) Legacy: tag in clientOrderId (normal orders)
+                if f"{self.cfg.tag_prefix}_ENTRY" in cid:
+                    if oid:
+                        s.entry_order_id = oid
+                    self.logic.on_entry_filled(fill_price)
+                    return
+
+                # 2) Algo/conditional: match by stored entry_client_id (often returned as clientAlgoId/tag)
+                if s.entry_client_id:
+                    if (cid and cid == str(s.entry_client_id)) or (tag and tag == str(s.entry_client_id)):
+                        if oid:
+                            s.entry_order_id = oid
+                        self.logic.on_entry_filled(fill_price)
+                        return
+
+                # 3) Algo/conditional: match by stored entry_algo_id
+                if s.entry_algo_id and algo_id and algo_id == str(s.entry_algo_id):
+                    if oid:
+                        s.entry_order_id = oid
+                    self.logic.on_entry_filled(fill_price)
+                    return
+
+            # From here on: handle exits
+            s = self.logic.state
+
+            # ✅ Exit recognition (scheme A): do NOT rely only on clientOrderId.
+            # Binance conditional/algo orders can rewrite clientOrderId (e.g. x-xxxx...).
+            # Prefer matching by orderId/algoId captured when we created the stop orders.
+            # (state already bound above)
+
+            # 1) Legacy: tag in clientOrderId (works for normal orders)
             if (
                 f"{self.cfg.tag_prefix}_STOP_LIMIT" in cid
                 or f"{self.cfg.tag_prefix}_STOP_MARKET" in cid
             ):
                 self.logic.on_exit_filled(fill_price)
                 return
+
+            # 2) Reliable: match by orderId we stored when placing stops
+            if oid:
+                if s.stop_limit_order_id is not None and oid == str(s.stop_limit_order_id):
+                    self.logic.on_exit_filled(fill_price)
+                    return
+                if s.stop_market_order_id is not None and oid == str(s.stop_market_order_id):
+                    self.logic.on_exit_filled(fill_price)
+                    return
+
+            # 3) Fallback: match by any stored client/algo identifiers
+            if cid or tag:
+                if s.stop_limit_client_id and cid == str(s.stop_limit_client_id):
+                    self.logic.on_exit_filled(fill_price)
+                    return
+                if s.stop_market_client_id and cid == str(s.stop_market_client_id):
+                    self.logic.on_exit_filled(fill_price)
+                    return
+
+                # Some wrappers store the original client/algo id in `tag` instead of clientOrderId.
+                if tag:
+                    if s.stop_limit_client_id and tag == str(s.stop_limit_client_id):
+                        self.logic.on_exit_filled(fill_price)
+                        return
+                    if s.stop_market_client_id and tag == str(s.stop_market_client_id):
+                        self.logic.on_exit_filled(fill_price)
+                        return
         except Exception:
             return
